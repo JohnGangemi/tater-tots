@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { loadConfig, SHIPPED_DEFAULTS } from "../../src/lib/config.js";
 import { createContext } from "../../src/lib/context.js";
@@ -41,11 +41,18 @@ function makeRepo(): string {
 }
 
 function isolatedEnv(dataRoot: string): NodeJS.ProcessEnv {
-  return {
+  const home = tmp("devkit-home-");
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     DEVKIT_DATA_DIR: dataRoot,
     XDG_CONFIG_HOME: tmp("devkit-xdg-"),
+    HOME: home,
+    USERPROFILE: home,
+    PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
   };
+  delete env.DEVKIT_CBM_BINARY;
+  delete env.CODEX_HOME;
+  return env;
 }
 
 function silentIo(chunks?: string[]) {
@@ -94,7 +101,7 @@ test("T-CFG-01 CLI --verification full overrides config light", async () => {
   assert.equal(ctx.config.resolved_level, "full");
 
   const code = await runCli(argv, env, silentIo());
-  assert.equal(code, 1);
+  assert.equal(code, 3);
 });
 
 test("env DEVKIT_VERIFICATION overrides file and CLI wins over env", () => {

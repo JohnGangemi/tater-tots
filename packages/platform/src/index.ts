@@ -15,3 +15,16 @@ export {
   type DevkitPaths,
 } from "./lib/paths.js";
 export { PlatformError, type ErrorCode } from "./lib/errors.js";
+export { initGraph, formatInitStdout, type InitOpts, type InitResult } from "./lib/graph/init.js";
+export {
+  graphSearch,
+  graphSymbol,
+  graphImpact,
+  type GraphSearchIn,
+  type GraphSearchOut,
+  type GraphSymbolIn,
+  type GraphSymbolOut,
+  type GraphImpactIn,
+  type GraphImpactOut,
+} from "./lib/graph/tools.js";
+export type { Hit } from "./lib/graph/parse.js";

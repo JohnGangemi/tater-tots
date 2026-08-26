@@ -12,6 +12,7 @@ export type PlatformContext = {
   identity: RepoIdentity;
   config: Config;
   paths: DevkitPaths;
+  env: EnvMap;
 };
 
 export type CreateContextOpts = {
@@ -52,5 +53,6 @@ export async function createContext(opts: CreateContextOpts = {}): Promise<Platf
     identity,
     config,
     paths,
+    env,
   };
 }

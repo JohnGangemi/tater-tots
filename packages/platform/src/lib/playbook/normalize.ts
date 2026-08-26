@@ -122,6 +122,42 @@ function dropLeadingEnv(argv: string[]): string[] {
   return out;
 }
 
+const LONE_ESCAPE = new Set([
+  ".",
+  "s",
+  "n",
+  "t",
+  "r",
+  "d",
+  "w",
+  "b",
+  "S",
+  "N",
+  "D",
+  "W",
+  "B",
+  "a",
+  "e",
+  "f",
+  "v",
+]);
+
+function hasWinPathSeparator(token: string): boolean {
+  for (const m of token.matchAll(/([^\\/]+)\\([^\\/]+)/g)) {
+    const after = m[2];
+    if (after === undefined) {
+      continue;
+    }
+    if (after.length >= 2) {
+      return true;
+    }
+    if (after.length === 1 && !LONE_ESCAPE.has(after)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isWinPathToken(token: string): boolean {
   if (!token.includes("\\")) {
     return false;
@@ -135,7 +171,7 @@ function isWinPathToken(token: string): boolean {
   if (token.startsWith("\\\\")) {
     return true;
   }
-  return !token.includes("/");
+  return hasWinPathSeparator(token);
 }
 
 function rewriteToken(token: string, repoPath: string, home: string): string {

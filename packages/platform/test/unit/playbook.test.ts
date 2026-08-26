@@ -316,6 +316,14 @@ test("normalize leaves backslash in regex arguments", () => {
   const norm = normalizeCommand("sed 's/\\./x/'", "/tmp/foo", "/tmp/foo");
   assert.equal(norm.argv[1], "s/\\./x/");
   assert.equal(norm.command, "sed s/\\./x/");
+  const grepDot = normalizeCommand("grep '\\.'", "/tmp/foo", "/tmp/foo");
+  assert.equal(grepDot.argv[1], "\\.");
+  const grepSpace = normalizeCommand("grep 'foo\\s'", "/tmp/foo", "/tmp/foo");
+  assert.equal(grepSpace.argv[1], "foo\\s");
+  const nl = normalizeCommand("printf 'a\\n'", "/tmp/foo", "/tmp/foo");
+  assert.equal(nl.argv[1], "a\\n");
+  const winRel = normalizeCommand("'src\\foo'", "/tmp/foo", "/tmp/foo");
+  assert.equal(winRel.command, "src/foo");
 });
 
 test("null exit_code is pass and is not a fail signal", async () => {

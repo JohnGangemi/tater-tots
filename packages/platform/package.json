@@ -21,6 +21,7 @@
     "format": "prettier --write src test package.json tsconfig.json tsconfig.build.json"
   },
   "dependencies": {
+    "@mongodb-js/zstd": "^7.0.0",
     "yaml": "^2.5.0"
   },
   "devDependencies": {

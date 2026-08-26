@@ -2,11 +2,14 @@ import {
   chmodSync,
   closeSync,
   copyFileSync,
+  cpSync,
   existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
   renameSync,
+  rmdirSync,
+  rmSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
@@ -113,6 +116,13 @@ export function mkdirUserOnlySync(dir: string): void {
     }
     applyUserOnlyDirSync(resolved);
   } catch (err) {
+    for (const d of created) {
+      try {
+        rmdirSync(d);
+      } catch {
+        // keep the dir if it is not empty
+      }
+    }
     if (err instanceof PlatformError) {
       throw err;
     }
@@ -177,11 +187,16 @@ export function movePathSync(from: string, to: string, kind: "file" | "dir"): vo
     const code =
       err && typeof err === "object" && "code" in err ? (err as { code?: string }).code : "";
     if (code === "EXDEV") {
-      if (kind === "file") {
-        copyFileSync(from, to);
-        unlinkSync(from);
-      } else {
-        throw ioError(`Could not move directory across devices: ${to}`);
+      try {
+        if (kind === "file") {
+          copyFileSync(from, to);
+          unlinkSync(from);
+        } else {
+          cpSync(from, to, { recursive: true });
+          rmSync(from, { recursive: true, force: true });
+        }
+      } catch (copyErr) {
+        throw ioError(`Could not move ${from} to ${to}`, String(copyErr));
       }
     } else if (isDirMissing(err)) {
       return;

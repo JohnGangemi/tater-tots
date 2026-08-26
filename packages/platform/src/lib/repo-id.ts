@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  type Dirent,
+} from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { PlatformError } from "./errors.js";
 import {
@@ -273,19 +280,23 @@ function moveIfExists(from: string, to: string, kind: "file" | "dir"): void {
 
 function moveDirChildren(from: string, to: string): void {
   mkdirUserOnlySync(to);
-  let names: string[] = [];
+  let entries: Dirent[] = [];
   try {
-    names = readdirSync(from);
+    entries = readdirSync(from, { withFileTypes: true });
   } catch {
     return;
   }
-  for (const name of names) {
-    const src = join(from, name);
-    const dest = join(to, name);
+  for (const ent of entries) {
+    const src = join(from, ent.name);
+    const dest = join(to, ent.name);
+    const kind = ent.isDirectory() ? "dir" : "file";
     if (existsSync(dest)) {
+      if (kind === "dir") {
+        moveDirChildren(src, dest);
+      }
       continue;
     }
-    movePathSync(src, dest, "file");
+    movePathSync(src, dest, kind);
   }
 }
 
@@ -317,7 +328,12 @@ function persistIdentity(identity: RepoIdentity, dataRoot: string, env: EnvMap):
     existing.sha256 === identity.sha256 &&
     existing.kind === identity.kind
   ) {
-    return existing;
+    if (identity.migrated_from === null || identity.migrated_from === existing.migrated_from) {
+      return existing;
+    }
+    const updated: RepoIdentity = { ...identity, created_at: existing.created_at };
+    writeIdentity(paths.identityFile, updated);
+    return updated;
   }
   writeIdentity(paths.identityFile, identity);
   return identity;
@@ -389,16 +405,6 @@ export async function resolveRepoId(
       migrated_from: migratedFrom,
       created_at: new Date().toISOString(),
     };
-    const existing = readIdentity(userDataPaths(dataRoot, repo_id, env).identityFile);
-    if (
-      existing &&
-      !isIdentityStub(existing) &&
-      existing.sha256 === identity.sha256 &&
-      existing.kind === "url" &&
-      migratedFrom === null
-    ) {
-      return existing;
-    }
     return persistIdentity(identity, dataRoot, env);
   }
 

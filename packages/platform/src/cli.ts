@@ -2,6 +2,7 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { loadConfig } from "./lib/config.js";
 import { createContext } from "./lib/context.js";
 import { errorMessage, exitCodeFor, isPlatformError, PlatformError } from "./lib/errors.js";
 
@@ -126,7 +127,25 @@ export async function runCli(
     return 0;
   }
 
+  if (args.command && !KNOWN_COMMANDS.has(args.command)) {
+    io.stderr.write(`devkit: unknown command '${args.command}'\n`);
+    io.stdout.write(HELP);
+    return 1;
+  }
+
   if (!args.command) {
+    if (args.config || args.verification) {
+      try {
+        loadConfig({
+          repoPath: args.path,
+          configFile: args.config,
+          verification: args.verification,
+          env,
+        });
+      } catch (err) {
+        return writeError(io, err);
+      }
+    }
     io.stdout.write(HELP);
     return 0;
   }
@@ -142,13 +161,7 @@ export async function runCli(
     return writeError(io, err);
   }
 
-  if (KNOWN_COMMANDS.has(args.command)) {
-    io.stderr.write(`devkit: ${args.command} is not implemented\n`);
-    return 1;
-  }
-
-  io.stderr.write(`devkit: unknown command '${args.command}'\n`);
-  io.stdout.write(HELP);
+  io.stderr.write(`devkit: ${args.command} is not implemented\n`);
   return 1;
 }
 

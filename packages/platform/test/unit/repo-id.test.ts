@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -11,6 +11,7 @@ import {
   readIdentity,
   resolveRepoId,
 } from "../../src/lib/repo-id.js";
+import { isWindows } from "../../src/lib/fs-atomic.js";
 import { resolveDataRoot, userDataPaths } from "../../src/lib/paths.js";
 
 const dirs: string[] = [];
@@ -48,7 +49,11 @@ function makeRepo(origin?: string): string {
 }
 
 function testEnv(dataRoot: string): NodeJS.ProcessEnv {
-  return { ...process.env, DEVKIT_DATA_DIR: dataRoot };
+  return {
+    ...process.env,
+    DEVKIT_DATA_DIR: dataRoot,
+    XDG_CONFIG_HOME: tmp("devkit-xdg-"),
+  };
 }
 
 after(() => {
@@ -117,6 +122,71 @@ test("T-ID-03 Add origin when URL id is empty moves files", async () => {
     hashSource(normalizeOriginUrl("git@github.com:Org/Repo.git") ?? "").repo_id,
     after.repo_id,
   );
+});
+
+test("migrate writes migrated_from when URL identity exists without playbook data", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const env = testEnv(dataRoot);
+  const repo = makeRepo();
+  const before = await resolveRepoId(repo, { env });
+  const oldPaths = userDataPaths(resolveDataRoot(env), before.repo_id, env);
+  writeFileSync(oldPaths.playbookFile, "old-playbook");
+
+  const origin = "git@github.com:Org/Repo.git";
+  const norm = normalizeOriginUrl(origin);
+  assert.ok(norm);
+  const hashed = hashSource(norm);
+  const urlPaths = userDataPaths(dataRoot, hashed.repo_id, env);
+  mkdirSync(urlPaths.playbookDir, { recursive: true });
+  writeFileSync(
+    urlPaths.identityFile,
+    `${JSON.stringify({
+      version: 1,
+      kind: "url",
+      repo_id: hashed.repo_id,
+      sha256: hashed.sha256,
+      source: norm,
+      migrated_from: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+    })}\n`,
+  );
+
+  git(repo, ["remote", "add", "origin", origin]);
+  const after = await resolveRepoId(repo, { env });
+  assert.equal(after.kind, "url");
+  assert.equal(after.repo_id, hashed.repo_id);
+  assert.equal(after.migrated_from, before.repo_id);
+  const stored = readIdentity(urlPaths.identityFile);
+  assert.ok(stored && !isIdentityStub(stored));
+  assert.equal(stored.migrated_from, before.repo_id);
+  assert.equal(readFileSync(urlPaths.playbookFile, "utf8"), "old-playbook");
+});
+
+test("migrate moves nested override dirs into an empty dest dir", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const env = testEnv(dataRoot);
+  const repo = makeRepo();
+  const before = await resolveRepoId(repo, { env });
+  const oldPaths = userDataPaths(resolveDataRoot(env), before.repo_id, env);
+  mkdirSync(join(oldPaths.overridesDir, "proposals"), { recursive: true });
+  writeFileSync(join(oldPaths.overridesDir, "proposals", "p.json"), "{}");
+
+  const origin = "git@github.com:Org/Repo.git";
+  const norm = normalizeOriginUrl(origin);
+  assert.ok(norm);
+  const urlId = hashSource(norm).repo_id;
+  const urlPaths = userDataPaths(dataRoot, urlId, env);
+  mkdirSync(urlPaths.overridesDir, { recursive: true });
+
+  git(repo, ["remote", "add", "origin", origin]);
+  const after = await resolveRepoId(repo, { env });
+  assert.equal(after.repo_id, urlId);
+  const dest = join(urlPaths.overridesDir, "proposals", "p.json");
+  assert.equal(readFileSync(dest, "utf8"), "{}");
+  if (!isWindows()) {
+    const mode = statSync(join(urlPaths.overridesDir, "proposals")).mode & 0o777;
+    assert.equal(mode, 0o700);
+  }
 });
 
 test("T-ID-04 Add origin when URL id already has a playbook does not merge", async () => {

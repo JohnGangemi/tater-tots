@@ -114,7 +114,11 @@ test("T-FS-01 New playbook dir mode 0700, file 0600 on POSIX", async () => {
   );
   const ctx = await createContext({
     repoPath: repo,
-    env: { ...process.env, DEVKIT_DATA_DIR: dataRoot },
+    env: {
+      ...process.env,
+      DEVKIT_DATA_DIR: dataRoot,
+      XDG_CONFIG_HOME: tmp("devkit-xdg-"),
+    },
   });
   const ctxDirMode = statSync(ctx.paths.playbookDir).mode & 0o777;
   const identMode = statSync(ctx.paths.identityFile).mode & 0o777;

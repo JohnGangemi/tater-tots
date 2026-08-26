@@ -162,7 +162,7 @@ function mergePlaybook(
   }
   for (const [k, v] of Object.entries(raw)) {
     if (k === "frequency") {
-      // Reserved and ignored in v1; any value is kept and must not fail load.
+      // Not an enum: any scalar value is accepted.
       if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
         target.frequency = String(v);
       }

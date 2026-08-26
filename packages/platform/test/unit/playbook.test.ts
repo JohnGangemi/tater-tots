@@ -308,6 +308,14 @@ test("normalize converts backslash repo paths to ./src/x", () => {
   const norm = normalizeCommand("'/tmp/foo\\src\\x'", repo, repo);
   assert.equal(norm.command, "./src/x");
   assert.equal(norm.key, "./src/x");
+  const rel = normalizeCommand("'.\\src\\x'", repo, repo);
+  assert.equal(rel.command, "./src/x");
+});
+
+test("normalize leaves backslash in regex arguments", () => {
+  const norm = normalizeCommand("sed 's/\\./x/'", "/tmp/foo", "/tmp/foo");
+  assert.equal(norm.argv[1], "s/\\./x/");
+  assert.equal(norm.command, "sed s/\\./x/");
 });
 
 test("null exit_code is pass and is not a fail signal", async () => {

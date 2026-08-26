@@ -122,13 +122,32 @@ function dropLeadingEnv(argv: string[]): string[] {
   return out;
 }
 
+function isWinPathToken(token: string): boolean {
+  if (!token.includes("\\")) {
+    return false;
+  }
+  if (token.startsWith(".\\") || token.startsWith("~\\")) {
+    return true;
+  }
+  if (/^[A-Za-z]:\\/.test(token)) {
+    return true;
+  }
+  if (token.startsWith("\\\\")) {
+    return true;
+  }
+  return !token.includes("/");
+}
+
 function rewriteToken(token: string, repoPath: string, home: string): string {
   let t = token;
   t = t.split("${HOME}").join("~");
   t = t.split("$HOME").join("~");
   t = replacePathPrefix(t, repoPath, ".");
   t = replacePathPrefix(t, home, "~");
-  return posixSlashes(t);
+  if (isWinPathToken(t)) {
+    return posixSlashes(t);
+  }
+  return t;
 }
 
 export function makeKey(argv: string[]): string {

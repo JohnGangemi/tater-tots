@@ -9,7 +9,8 @@
     ".": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "adapters"
   ],
   "engines": {
     "node": ">=20"
@@ -18,11 +19,13 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test test/unit/*.test.ts test/integration/*.test.ts",
-    "format": "prettier --write src test package.json tsconfig.json tsconfig.build.json"
+    "format": "prettier --write src test adapters package.json tsconfig.json tsconfig.build.json"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@mongodb-js/zstd": "^7.0.0",
-    "yaml": "^2.5.0"
+    "yaml": "^2.5.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

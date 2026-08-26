@@ -70,10 +70,25 @@ function isUncertainSecret(value: string): boolean {
   return shannonEntropy(value) >= 3.5;
 }
 
-function flagName(token: string): string {
+function flagHead(token: string): string {
   const eq = token.indexOf("=");
-  const raw = eq === -1 ? token : token.slice(0, eq);
-  return raw.toLowerCase();
+  return eq === -1 ? token : token.slice(0, eq);
+}
+
+function flagName(token: string): string {
+  return flagHead(token).toLowerCase();
+}
+
+function isHostPasswordFlag(token: string): boolean {
+  const head = flagHead(token);
+  if (head.toLowerCase() === "--password") {
+    return true;
+  }
+  if (head === "-p") {
+    return true;
+  }
+  // mysql -pSECRET. Do not treat -P3306 as password.
+  return head.startsWith("-p") && !head.startsWith("--") && head.length > 2;
 }
 
 function hostBase(token: string | undefined): string {
@@ -162,7 +177,7 @@ export function redactArgv(argv: string[]): RedactResult {
         continue;
       }
       const prev = hostBase(out[i - 1]);
-      if (P_HOSTS.has(prev) && (name === "-p" || /^-(p|-password)$/i.test(name))) {
+      if (P_HOSTS.has(prev) && isHostPasswordFlag(tok)) {
         drop = true;
         if (tok.startsWith("-p") && tok.length > 2 && !tok.startsWith("--")) {
           out[i] = `-p${PLACEHOLDER}`;

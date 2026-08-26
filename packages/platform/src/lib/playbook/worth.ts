@@ -208,7 +208,7 @@ export function countSignals(input: SignalInput): number {
   if (input.argv.some((t) => pathExistsInRepo(input.repoPath, t))) {
     n += 1;
   }
-  if (input.exitCode !== 0) {
+  if (input.exitCode !== null && input.exitCode !== 0) {
     n += 1;
   }
   if (input.existingKeys.has(input.key)) {

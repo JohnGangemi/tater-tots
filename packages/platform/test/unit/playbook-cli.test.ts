@@ -107,6 +107,14 @@ test("devkit playbook show prints truncated rows", async () => {
   assert.match(command, /\.\.\.$/);
 });
 
+function dataRowCount(out: string): number {
+  const lines = out.replace(/\n$/, "").split("\n");
+  if (lines[0] !== "key\tstatus\tcount\tcommand") {
+    return -1;
+  }
+  return lines.length - 1;
+}
+
 test("devkit playbook show --limit caps at 100 and defaults to 20", async () => {
   const parsed = parseArgv(["node", "devkit", "playbook", "show", "--limit", "1000"]);
   assert.equal(parsed.command, "playbook");
@@ -115,14 +123,50 @@ test("devkit playbook show --limit caps at 100 and defaults to 20", async () => 
   const dataRoot = tmp("devkit-data-");
   const repo = makeRepo();
   const env = isolatedEnv(dataRoot);
-  const cap = captureIo();
-  const code = await runCli(
-    ["node", "devkit", "--path", repo, "playbook", "show", "--limit", "5"],
-    env,
-    cap.io,
+  const ctx = await createContext({ repoPath: repo, env });
+  for (let i = 0; i < 101; i++) {
+    assert.equal(
+      (
+        await playbookRecord(ctx, {
+          raw_command: `npm run s${i}`,
+          tool_name: "Bash",
+          cwd: repo,
+          exit_code: 0,
+          duration_ms: 10,
+        })
+      ).result,
+      "stored",
+    );
+  }
+
+  const cap5 = captureIo();
+  assert.equal(
+    await runCli(
+      ["node", "devkit", "--path", repo, "playbook", "show", "--limit", "5"],
+      env,
+      cap5.io,
+    ),
+    0,
   );
-  assert.equal(code, 0);
-  assert.match(cap.out(), /^key\tstatus\tcount\tcommand\n$/);
+  assert.equal(dataRowCount(cap5.out()), 5);
+
+  const capDef = captureIo();
+  assert.equal(
+    await runCli(["node", "devkit", "--path", repo, "playbook", "show"], env, capDef.io),
+    0,
+  );
+  assert.equal(dataRowCount(capDef.out()), 20);
+
+  const capMax = captureIo();
+  assert.equal(
+    await runCli(
+      ["node", "devkit", "--path", repo, "playbook", "show", "--limit", "1000"],
+      env,
+      capMax.io,
+    ),
+    0,
+  );
+  assert.equal(dataRowCount(capMax.out()), 100);
 });
 
 test("devkit playbook stats prints counts only", async () => {

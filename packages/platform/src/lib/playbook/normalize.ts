@@ -26,6 +26,10 @@ function stripSep(p: string): string {
   return p.replace(/[\\/]+$/g, "");
 }
 
+function posixSlashes(token: string): string {
+  return token.split("\\").join("/");
+}
+
 function replacePathPrefix(token: string, prefix: string, rep: string): string {
   const p = stripSep(prefix);
   if (!p) {
@@ -35,7 +39,7 @@ function replacePathPrefix(token: string, prefix: string, rep: string): string {
     return rep;
   }
   if (token.startsWith(`${p}/`) || token.startsWith(`${p}\\`)) {
-    return `${rep}${token.slice(p.length)}`;
+    return posixSlashes(`${rep}${token.slice(p.length)}`);
   }
   return token;
 }
@@ -82,7 +86,8 @@ export function splitArgv(command: string): string[] {
       quote = c;
       continue;
     }
-    if (c === "\\" && i + 1 < command.length) {
+    // On Windows `\` is a path separator, not an escape.
+    if (process.platform !== "win32" && c === "\\" && i + 1 < command.length) {
       const next = command[i + 1];
       cur += next ?? "";
       i += 1;
@@ -123,7 +128,7 @@ function rewriteToken(token: string, repoPath: string, home: string): string {
   t = t.split("$HOME").join("~");
   t = replacePathPrefix(t, repoPath, ".");
   t = replacePathPrefix(t, home, "~");
-  return t;
+  return posixSlashes(t);
 }
 
 export function makeKey(argv: string[]): string {
@@ -310,7 +315,26 @@ export function pathExistsInRepo(repoPath: string, token: string): boolean {
   }
   const abs = isAbsolute(token) ? token : resolve(repoPath, token);
   try {
-    return existsSync(abs);
+    if (!existsSync(abs)) {
+      return false;
+    }
+    let realRepo = repoPath;
+    try {
+      realRepo = realpathSync(repoPath);
+    } catch {
+      // keep repoPath
+    }
+    let realAbs = abs;
+    try {
+      realAbs = realpathSync(abs);
+    } catch {
+      // keep abs
+    }
+    const rel = relative(realRepo, realAbs);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }

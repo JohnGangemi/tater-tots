@@ -352,7 +352,8 @@ export async function playbookRecord(
     return { result: "excluded" };
   }
 
-  const fail = ev.exit_code !== 0;
+  const exit = ev.exit_code ?? 0;
+  const fail = exit !== 0;
   if (fail && !ctx.config.playbook.keep_failures) {
     logPlatform(logEnv(ctx), {
       component: "playbook",
@@ -374,7 +375,7 @@ export async function playbookRecord(
     purpose_tags: tags,
     cwd_rel: norm.cwd_rel,
     last_status: fail ? "fail" : "pass",
-    last_exit: ev.exit_code ?? 0,
+    last_exit: exit,
     last_duration_ms: ev.duration_ms ?? 0,
     last_run_at: now,
     lru_at: now,

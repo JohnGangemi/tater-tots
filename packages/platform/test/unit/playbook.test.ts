@@ -7,12 +7,14 @@ import { after, test } from "node:test";
 import { compress, decompress } from "@mongodb-js/zstd";
 import { createContext } from "../../src/lib/context.js";
 import { PlatformError } from "../../src/lib/errors.js";
+import { normalizeCommand, pathExistsInRepo } from "../../src/lib/playbook/normalize.js";
 import {
   playbookList,
   playbookLookup,
   playbookRecord,
   type ObserveEvent,
 } from "../../src/lib/playbook/store.js";
+import { redactArgv } from "../../src/lib/redact.js";
 
 const dirs: string[] = [];
 
@@ -265,4 +267,63 @@ test("corrupt playbook reads empty and refuses writes until reset", async () => 
   assert.equal(stored.result, "stored");
   const after = await playbookLookup(ctx, { purpose: "test" });
   assert.equal(after.commands[0]?.command, "npm test");
+});
+
+test("path signal counts only paths inside the repo", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  mkdirSync(join(repo, "src"));
+  writeFileSync(join(repo, "src", "x"), "x");
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  assert.equal(pathExistsInRepo(ctx.repoPath, "./src/x"), true);
+  assert.equal(pathExistsInRepo(ctx.repoPath, join(ctx.repoPath, "src", "x")), true);
+  assert.equal(pathExistsInRepo(ctx.repoPath, process.execPath), false);
+
+  const outside = join(tmp("devkit-outside-"), "outside.txt");
+  writeFileSync(outside, "x");
+  assert.equal(pathExistsInRepo(ctx.repoPath, outside), false);
+
+  ctx.config.playbook.filter = "medium";
+  const out = await playbookRecord(
+    ctx,
+    bash(repo, `${process.execPath} -e 1`, { duration_ms: 4000 }),
+  );
+  assert.equal(out.result, "excluded");
+});
+
+test("mysql -P is port and is not redacted; -p is password", () => {
+  const port = redactArgv(["mysql", "-P", "3306"]);
+  assert.equal(port.drop, false);
+  assert.deepEqual(port.argv, ["mysql", "-P", "3306"]);
+  const portAttached = redactArgv(["mysql", "-P3306"]);
+  assert.equal(portAttached.drop, false);
+  const pass = redactArgv(["mysql", "-p", "secret"]);
+  assert.equal(pass.drop, true);
+  const attached = redactArgv(["mysql", "-psecret"]);
+  assert.equal(attached.drop, true);
+});
+
+test("normalize converts backslash repo paths to ./src/x", () => {
+  const repo = "/tmp/foo";
+  const norm = normalizeCommand("'/tmp/foo\\src\\x'", repo, repo);
+  assert.equal(norm.command, "./src/x");
+  assert.equal(norm.key, "./src/x");
+});
+
+test("null exit_code is pass and is not a fail signal", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  ctx.config.playbook.filter = "medium";
+  const skipped = await playbookRecord(
+    ctx,
+    bash(repo, "node -e 1", { duration_ms: 4000, exit_code: null }),
+  );
+  assert.equal(skipped.result, "excluded");
+
+  const stored = await playbookRecord(ctx, bash(repo, "npm test", { exit_code: null }));
+  assert.equal(stored.result, "stored");
+  const hits = await playbookLookup(ctx, { purpose: "test" });
+  assert.equal(hits.commands[0]?.last_status, "pass");
+  assert.equal(hits.commands[0]?.last_exit, 0);
 });

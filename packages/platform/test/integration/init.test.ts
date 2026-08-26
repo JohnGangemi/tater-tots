@@ -18,6 +18,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { runCli, type CliIo } from "../../src/cli.js";
 import { createContext } from "../../src/lib/context.js";
+import { PlatformError } from "../../src/lib/errors.js";
 import { cbmCli } from "../../src/lib/graph/cbm-client.js";
 import { CBM_RELEASE_BASE, cbmBinaryName } from "../../src/lib/graph/cbm-release.js";
 import { graphSearch } from "../../src/lib/graph/tools.js";
@@ -219,6 +220,25 @@ test(
     assert.ok(searched && typeof searched === "object");
   },
 );
+
+test("cbmCli maps MCP isError timeout on exit 1 to graph_timeout", async () => {
+  chmodSync(fakeCbmBin, 0o755);
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot, { withFakeCbm: true });
+  env.FAKE_CBM_IS_ERROR = "timeout";
+  const ctx = await createContext({ repoPath: repo, env });
+  await assert.rejects(
+    () =>
+      cbmCli(
+        ctx,
+        "search_graph",
+        { project: "x", format: "json", limit: 15, "name-pattern": ".*Handle.*" },
+        { timeoutMs: 2000 },
+      ),
+    (err: unknown) => err instanceof PlatformError && err.code === "graph_timeout",
+  );
+});
 
 test("T-IN-17 wrapped structuredContent.groups flattens to Hit[]", async () => {
   chmodSync(fakeCbmBin, 0o755);

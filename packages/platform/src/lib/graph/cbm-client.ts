@@ -431,6 +431,21 @@ function throwIfAdmission(text: string): void {
   }
 }
 
+function isMcpEnvelopeText(stdout: string): boolean {
+  if (!stdout) {
+    return false;
+  }
+  try {
+    const env = JSON.parse(stdout) as unknown;
+    if (!env || typeof env !== "object" || Array.isArray(env)) {
+      return false;
+    }
+    return "isError" in env || "structuredContent" in env || "content" in env;
+  } catch {
+    return false;
+  }
+}
+
 export async function cbmCli(
   ctx: PlatformContext,
   tool: string,
@@ -450,19 +465,22 @@ export async function cbmCli(
     throwIfAdmission(combined);
     throw graphTimeout(`codebase-memory-mcp ${tool} timed out`);
   }
+  const trimmed = result.stdout.trim();
   if (result.status !== 0) {
     throwIfAdmission(combined);
-    const detail = (result.stderr.trim() || result.stdout.trim()).slice(0, 500);
+    // v0.10.8 cli --json still prints the MCP envelope and exits 1 when isError.
+    if (isMcpEnvelopeText(trimmed)) {
+      unwrapCbmJson(trimmed);
+    }
+    const detail = (result.stderr.trim() || trimmed).slice(0, 500);
     throw graphUnavailable(`codebase-memory-mcp ${tool} failed`, detail || undefined);
   }
-  let body: unknown;
   try {
-    body = unwrapCbmJson(result.stdout.trim());
+    return unwrapCbmJson(trimmed);
   } catch (err) {
     throwIfAdmission(combined);
     throw err;
   }
-  return body;
 }
 
 export function missingCbmInitError(): PlatformError {

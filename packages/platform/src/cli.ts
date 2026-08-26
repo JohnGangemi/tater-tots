@@ -211,15 +211,15 @@ export async function runCli(
   }
 
   try {
-    const ctx = await createContext({
-      repoPath: args.path,
-      configFile: args.config,
-      verification: args.verification,
-      env,
-    });
     if (args.command === "init") {
       const mode = parseInitMode(args.mode);
       const waitTimeoutSec = parseWaitTimeout(args.waitTimeoutSec);
+      const ctx = await createContext({
+        repoPath: args.path,
+        configFile: args.config,
+        verification: args.verification,
+        env,
+      });
       const result = await initGraph(ctx, {
         ...(mode ? { mode } : {}),
         ...(waitTimeoutSec !== undefined ? { waitTimeoutSec } : {}),
@@ -233,6 +233,12 @@ export async function runCli(
       io.stdout.write(formatInitStdout(ctx, result));
       return 0;
     }
+    await createContext({
+      repoPath: args.path,
+      configFile: args.config,
+      verification: args.verification,
+      env,
+    });
   } catch (err) {
     return writeError(io, err);
   }

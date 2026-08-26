@@ -223,7 +223,7 @@ export async function graphImpact(ctx: PlatformContext, q: GraphImpactIn): Promi
       { timeoutMs: QUERY_TIMEOUT_MS },
     );
     const symbols = flattenGroups(found)
-      .filter((h) => DEF_LABELS.has(h.label) || h.name)
+      .filter((h) => DEF_LABELS.has(h.label) && h.name)
       .slice(0, 5);
     for (const sym of symbols) {
       try {

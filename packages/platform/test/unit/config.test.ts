@@ -184,6 +184,28 @@ test("CLI flags without a command still fail on bad config", async () => {
   assert.equal(badFile, 1);
 });
 
+test("invalid init flags do not write user data", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot);
+  const chunks: string[] = [];
+  const badMode = await runCli(
+    ["node", "devkit", "--path", repo, "init", "--mode", "bogus"],
+    env,
+    silentIo(chunks),
+  );
+  assert.equal(badMode, 1);
+  assert.match(chunks.join(""), /Invalid --mode/);
+  assert.equal(existsSync(join(dataRoot, "devkit", "playbooks")), false);
+  const badWait = await runCli(
+    ["node", "devkit", "--path", repo, "init", "--wait-timeout-sec", "0"],
+    isolatedEnv(dataRoot),
+    silentIo(),
+  );
+  assert.equal(badWait, 1);
+  assert.equal(existsSync(join(dataRoot, "devkit", "playbooks")), false);
+});
+
 test("unknown command does not write user data", async () => {
   const dataRoot = tmp("devkit-data-");
   const code = await runCli(["node", "devkit", "foobar"], isolatedEnv(dataRoot), silentIo());

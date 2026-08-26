@@ -154,6 +154,10 @@ async function main() {
   if (tool === "search_graph" || tool === "list_projects") {
     await waitStdinClosed();
   }
+  if (process.env.FAKE_CBM_IS_ERROR === "timeout") {
+    print({ error: "timed out after 600s" }, true);
+    process.exit(1);
+  }
   const state = loadState();
   state.last_argv = process.argv.slice(2);
   if (tool === "list_projects") {

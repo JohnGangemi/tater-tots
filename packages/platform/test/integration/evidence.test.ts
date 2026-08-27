@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -241,8 +250,8 @@ test(
   async () => {
     const dataRoot = tmp("devkit-data-");
     const repo = makeRepo();
-    const { binDir } = makeBins();
-    const env = isolatedEnv(dataRoot, binDir);
+    const { binDir, log } = makeBins();
+    const env = isolatedEnv(dataRoot, binDir, { EVIDENCE_SPAWN_LOG: log });
     const ctx = await createContext({ repoPath: repo, env });
     const result = await evidenceCheck(ctx, { argv: ["npm", "test", "--", "--run", "x"] });
     assert.equal(result.verdict, "pass");
@@ -250,8 +259,37 @@ test(
     const call = evidenceSpawnCalls[0];
     assert.ok(call);
     assert.equal(call.shell, false);
-    assert.match(basename(call.file), /^npm\.cmd$/i);
-    assert.deepEqual(call.args, ["test", "--", "--run", "x"]);
+    assert.match(basename(call.target), /^npm\.cmd$/i);
+    assert.match(call.file.toLowerCase(), /cmd\.exe$/);
+    assert.deepEqual(call.args.slice(0, 3), ["/d", "/s", "/c"]);
+    assert.equal(call.args.length, 4);
+    const logged = JSON.parse(readFileSync(log, "utf8")) as { argv: string[] };
+    assert.deepEqual(logged.argv, ["test", "--", "--run", "x"]);
+  },
+);
+
+test(
+  "PATH npm symlink out of the PATH dir still passes",
+  { skip: process.platform === "win32" },
+  async () => {
+    const dataRoot = tmp("devkit-data-");
+    const repo = makeRepo();
+    const { binDir, log } = makeBins();
+    const pathDir = tmp("devkit-ev-path-");
+    const shim = join(pathDir, "npm");
+    symlinkSync(join(binDir, "npm"), shim);
+    const env = isolatedEnv(dataRoot, pathDir, { EVIDENCE_SPAWN_LOG: log });
+    const ctx = await createContext({ repoPath: repo, env });
+    const result = await evidenceCheck(ctx, { command: "npm test" });
+    assert.equal(result.verdict, "pass");
+    assert.equal(evidenceSpawnCalls.length, 1);
+    const call = evidenceSpawnCalls[0];
+    assert.ok(call);
+    assert.equal(call.file, shim);
+    assert.equal(call.target, shim);
+    assert.notEqual(realpathSync(call.file), call.file);
+    const logged = JSON.parse(readFileSync(log, "utf8")) as { argv: string[] };
+    assert.deepEqual(logged.argv, ["test"]);
   },
 );
 

@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
-import { basename, delimiter, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { PlatformContext } from "../context.js";
 import { logPlatform } from "../log.js";
 import type { EnvMap } from "../paths.js";
@@ -37,6 +37,7 @@ export type EvidenceSpawnCall = {
   args: string[];
   shell: boolean;
   cwd: string;
+  target: string;
 };
 
 /** Tests assert spawn argv and that denied commands never start a child. */
@@ -63,6 +64,8 @@ const DENY_PHRASES = [
 ] as const;
 const CAPTURE_MAX = 262_144;
 const DEFAULT_PATHEXT = ".EXE;.CMD;.BAT;.COM";
+const CMD_META_RE = /([()\][%!^"`<>&|;, *?])/g;
+const CMD_SHIM_RE = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
 
 type ChildRun = {
   status: number | null;
@@ -139,11 +142,21 @@ function hasExt(token: string): boolean {
 
 function pathextSuffixes(env: NodeJS.ProcessEnv): string[] {
   const raw = env.PATHEXT && env.PATHEXT.trim() ? env.PATHEXT : DEFAULT_PATHEXT;
-  return raw
+  const list = raw
     .split(";")
     .map((e) => e.trim())
     .filter((e) => e.length > 0)
     .map((e) => (e.startsWith(".") ? e : `.${e}`));
+  const exe: string[] = [];
+  const rest: string[] = [];
+  for (const e of list) {
+    if (e.toLowerCase() === ".exe") {
+      exe.push(e);
+    } else {
+      rest.push(e);
+    }
+  }
+  return [...exe, ...rest];
 }
 
 function allowedBin(real: string, repoPath: string, env: NodeJS.ProcessEnv): boolean {
@@ -170,7 +183,8 @@ function resolveArgv0(
       return undefined;
     }
     const real = tryRealpath(abs);
-    return allowedBin(real, repoPath, env) ? real : undefined;
+    // Jail the target so a repo link to the outside does not run.
+    return allowedBin(real, repoPath, env) ? abs : undefined;
   }
 
   const suffixes =
@@ -181,13 +195,64 @@ function resolveArgv0(
       if (!isExecutableFile(cand)) {
         continue;
       }
-      const real = tryRealpath(cand);
-      if (allowedBin(real, repoPath, env)) {
-        return real;
-      }
+      // PATH hit is already in a PATH dir. Do not jail the symlink target.
+      return cand;
     }
   }
   return undefined;
+}
+
+function isWinBatch(file: string): boolean {
+  const ext = extname(file).toLowerCase();
+  return process.platform === "win32" && (ext === ".cmd" || ext === ".bat");
+}
+
+function escapeCmdCommand(arg: string): string {
+  return arg.replace(CMD_META_RE, "^$1");
+}
+
+function escapeCmdArgument(arg: string, doubleEscape: boolean): string {
+  let s = String(arg);
+  s = s.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"');
+  s = s.replace(/(?=(\\+?)?)\1$/, "$1$1");
+  s = `"${s}"`;
+  s = s.replace(CMD_META_RE, "^$1");
+  if (doubleEscape) {
+    s = s.replace(CMD_META_RE, "^$1");
+  }
+  return s;
+}
+
+function cmdExe(env: NodeJS.ProcessEnv): string {
+  const fromEnv = env.ComSpec || env.comspec || env.COMSPEC;
+  if (fromEnv && isExecutableFile(fromEnv)) {
+    return fromEnv;
+  }
+  for (const dir of pathDirs(env)) {
+    const cand = join(dir, "cmd.exe");
+    if (isExecutableFile(cand)) {
+      return cand;
+    }
+  }
+  return "cmd.exe";
+}
+
+function wrapSpawn(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): { file: string; args: string[]; verbatim: boolean } {
+  if (!isWinBatch(file)) {
+    return { file, args, verbatim: false };
+  }
+  // Node 20+ rejects spawn(.cmd, { shell: false }). cmd.exe keeps shell false.
+  const double = CMD_SHIM_RE.test(file);
+  const line = [escapeCmdCommand(file), ...args.map((a) => escapeCmdArgument(a, double))].join(" ");
+  return {
+    file: cmdExe(env),
+    args: ["/d", "/s", "/c", `"${line}"`],
+    verbatim: true,
+  };
 }
 
 function isDeniedCommand(argv: string[], rawCommand?: string): boolean {
@@ -287,7 +352,7 @@ function appendCapture(prev: string, chunk: Buffer): string {
 function runChild(
   file: string,
   args: string[],
-  opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number },
+  opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; verbatim?: boolean },
 ): Promise<ChildRun> {
   return new Promise((resolvePromise) => {
     let done = false;
@@ -302,6 +367,7 @@ function runChild(
       windowsHide: true,
       detached: process.platform !== "win32",
       shell: false,
+      windowsVerbatimArguments: Boolean(opts.verbatim),
     });
     child.stdout?.on("data", (chunk: Buffer) => {
       merged = appendCapture(merged, chunk);
@@ -447,9 +513,21 @@ export async function evidenceCheck(
   let spawnFailed = false;
 
   for (let i = 0; i < maxAttempts; i++) {
-    evidenceSpawnCalls.push({ file, args, shell: false, cwd: jailed });
+    const wrapped = wrapSpawn(file, args, childEnv);
+    evidenceSpawnCalls.push({
+      file: wrapped.file,
+      args: wrapped.args,
+      shell: false,
+      cwd: jailed,
+      target: file,
+    });
     attempts += 1;
-    const run = await runChild(file, args, { cwd: jailed, env: childEnv, timeoutMs });
+    const run = await runChild(wrapped.file, wrapped.args, {
+      cwd: jailed,
+      env: childEnv,
+      timeoutMs,
+      verbatim: wrapped.verbatim,
+    });
     lastTail = takeTail(run.merged, tailLines, tailBytes);
     if (run.spawnError && !run.timedOut) {
       spawnFailed = true;

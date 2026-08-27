@@ -43,6 +43,10 @@ export {
   startCoordinator,
   runPlanCommand,
   runImplementCommand,
+  runDebugCommand,
+  runReviewCommand,
+  collectDiffPaths,
+  runFinishCommand,
   evidenceBeforeDone,
   evidenceGateExit,
   shouldRunAdversarial,
@@ -75,4 +79,5 @@ export type {
   IntentParseOpts,
   RunPacket,
   SubagentPacket,
+  FinishPacket,
 } from "./lib/index.js";

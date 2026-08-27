@@ -1,0 +1,43 @@
+{
+  "name": "@coredevkit/plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "devkit": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "agents",
+    "adapters",
+    "plugin.json",
+    ".claude-plugin",
+    ".mcp.json"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test test/unit/*.test.ts test/integration/*.test.ts",
+    "format": "prettier --write src test package.json tsconfig.json tsconfig.build.json",
+    "pretest": "pnpm --filter @coredevkit/platform build && tsc -p tsconfig.build.json",
+    "pretypecheck": "pnpm --filter @coredevkit/platform build",
+    "prebuild": "pnpm --filter @coredevkit/platform build"
+  },
+  "dependencies": {
+    "@coredevkit/platform": "workspace:*",
+    "yaml": "^2.5.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "prettier": "^3.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

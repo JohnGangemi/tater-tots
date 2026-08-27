@@ -512,3 +512,33 @@ test("review returns not_found for a missing in-repo plan", async () => {
     },
   );
 });
+
+test("review accepts a plan.md under DEVKIT_HOME/plans", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  const planDir = join(ctx.paths.plansDir, "wt");
+  mkdirSync(planDir, { recursive: true });
+  const plan = join(planDir, "plan.md");
+  copyFileSync(join(fixtureDir, "pass.md"), plan);
+  const out = await adversarialReview(ctx, { plan_path: plan });
+  assert.equal(out.plan_path, realpathSync(plan));
+  assert.equal(out.verdict, "PASS");
+});
+
+test("review rejects a plan.md under other user-data trees", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  mkdirSync(ctx.paths.playbookDir, { recursive: true });
+  const outsidePlans = join(ctx.paths.playbookDir, "plan.md");
+  writeFileSync(outsidePlans, "# Plan\n\n1. Step.\n");
+  await assert.rejects(
+    () => adversarialReview(ctx, { plan_path: outsidePlans }),
+    (err: unknown) => {
+      assert.equal(err instanceof PlatformError, true);
+      assert.equal((err as PlatformError).code, "usage");
+      return true;
+    },
+  );
+});

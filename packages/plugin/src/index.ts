@@ -1,0 +1,38 @@
+export { runPluginCli, parsePluginArgv, HELP, PLUGIN_COMMANDS } from "./cli.js";
+export type { PluginCliIo, PluginArgv, RunPluginCliOpts } from "./cli.js";
+export {
+  PluginError,
+  isPluginError,
+  pluginExitCode,
+  loadPlatform,
+  PLATFORM_MISSING,
+  loadPluginConfig,
+  PLUGIN_SHIPPED_DEFAULTS,
+  checkerName,
+  writeProgressAtomic,
+  logPlugin,
+  worktreeHash,
+  loadSkillBody,
+  loadCoordinator,
+  saveCoordinator,
+  markStep,
+  progressFilePath,
+  parseCoordinator,
+  stringifyCoordinator,
+  resumeStep,
+  STEP_STATUSES,
+  ADVERSARIAL_STATUSES,
+  TERMINAL,
+} from "./lib/index.js";
+export type {
+  PlatformModule,
+  PluginConfig,
+  SubagentRole,
+  WorktreeId,
+  AdversarialStatus,
+  CoordinatorRecord,
+  CoordinatorStep,
+  ProgressEvent,
+  StackPr,
+  StepStatus,
+} from "./lib/index.js";

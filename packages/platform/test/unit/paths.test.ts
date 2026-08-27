@@ -69,6 +69,8 @@ test("userDataPaths puts the playbook under DEVKIT_HOME/playbooks/<repo-id>", ()
     paths.identityFile,
     join("/tmp/udata", "devkit", "playbooks", "abc123", "identity.json"),
   );
+  assert.equal(paths.progressDir, join("/tmp/udata", "devkit", "progress", "abc123"));
+  assert.equal(paths.plansDir, join("/tmp/udata", "devkit", "plans", "abc123"));
 });
 
 test("T-FS-01 New playbook dir mode 0700, file 0600 on POSIX", async () => {

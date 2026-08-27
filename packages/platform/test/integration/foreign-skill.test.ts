@@ -446,7 +446,6 @@ test("using-coredevkit is thin and plugin workflows are absent", () => {
   assert.match(body, /tune_status/);
   assert.match(body, /tune_accept/);
   assert.doesNotMatch(body, /writing-plans|issue-to-pr|HTML|coordinator|stacked/i);
-  assert.equal(existsSync(join(workspaceRoot, "packages", "plugin")), false);
   for (const name of WORKFLOW_SKILLS) {
     assert.equal(existsSync(join(workspaceRoot, "packages", "platform", "skills", name)), false);
   }

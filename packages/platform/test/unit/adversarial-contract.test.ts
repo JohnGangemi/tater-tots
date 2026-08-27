@@ -423,6 +423,13 @@ test("review PATCH when graph has a similar path for a missing basename", async 
   assert.equal(pathHit?.evidence_type, "graph");
   assert.equal(pathHit?.plan_target, "ok.ts");
   assert.equal(pathHit?.patch, "src/ok.ts");
+  const argv = (
+    JSON.parse(readFileSync(env.FAKE_CBM_STATE as string, "utf8")) as { last_argv?: string[] }
+  ).last_argv;
+  assert.ok(Array.isArray(argv));
+  assert.equal(argv.includes("--query"), false);
+  assert.equal(argv.includes("--name-pattern"), false);
+  assert.equal(argv.includes("--file-pattern"), true);
 });
 
 test("commandOnDisk treats absolute PATH binaries as executable", () => {

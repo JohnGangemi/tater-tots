@@ -110,6 +110,29 @@ export async function graphSearch(ctx: PlatformContext, q: GraphSearchIn): Promi
     flags["file-pattern"] = q.path;
   }
   const body = await cbmCli(ctx, "search_graph", flags, { timeoutMs: QUERY_TIMEOUT_MS });
+  return searchOut(body, graph);
+}
+
+export async function graphSearchFile(
+  ctx: PlatformContext,
+  filePattern: string,
+): Promise<GraphSearchOut> {
+  const { name: project, graph } = await resolveProject(ctx);
+  const body = await cbmCli(
+    ctx,
+    "search_graph",
+    {
+      project,
+      format: "json",
+      limit: SEARCH_LIMIT,
+      "file-pattern": filePattern,
+    },
+    { timeoutMs: QUERY_TIMEOUT_MS },
+  );
+  return searchOut(body, graph);
+}
+
+function searchOut(body: unknown, graph: GraphState): GraphSearchOut {
   const hits = flattenGroups(body).slice(0, SEARCH_LIMIT);
   const hasMore = Boolean(
     body &&

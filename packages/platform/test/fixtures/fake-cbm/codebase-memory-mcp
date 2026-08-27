@@ -210,7 +210,9 @@ async function main() {
   if (tool === "search_graph") {
     saveState(state);
     const pat = flags["file-pattern"];
-    if (typeof pat === "string" && pat.length > 0) {
+    const hasTextQuery = flags.query !== undefined || flags["name-pattern"] !== undefined;
+    // Escaped basename, no BM25 query: similar-path review. Other file-pattern stays HandleRequest.
+    if (typeof pat === "string" && pat.includes("\\.") && !pat.includes("/") && !hasTextQuery) {
       const name = basename(String(pat).replace(/\\/g, ""));
       const file = `src/${name}`;
       print({

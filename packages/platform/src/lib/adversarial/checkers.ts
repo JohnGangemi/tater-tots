@@ -3,7 +3,7 @@ import { basename, delimiter, isAbsolute, join, relative, resolve } from "node:p
 import type { PlatformContext } from "../context.js";
 import { isPlatformError } from "../errors.js";
 import { escapeRegExp } from "../graph/parse.js";
-import { graphSearch } from "../graph/tools.js";
+import { graphSearch, graphSearchFile } from "../graph/tools.js";
 import { pathExistsInRepo, splitArgv } from "../playbook/normalize.js";
 import { playbookList } from "../playbook/store.js";
 import type { PurposeTag } from "../playbook/types.js";
@@ -135,10 +135,7 @@ async function similarGraphPath(
   if (!base) {
     return undefined;
   }
-  // Space keeps query out of name-pattern so file-pattern can match a path.
-  const out = await withGraph(gate, () =>
-    graphSearch(ctx, { query: "file match", path: escapeRegExp(base) }),
-  );
+  const out = await withGraph(gate, () => graphSearchFile(ctx, escapeRegExp(base)));
   if (!out) {
     return undefined;
   }

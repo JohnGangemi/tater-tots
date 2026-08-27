@@ -118,6 +118,9 @@ export type PluginArgv = {
   query?: string;
   scope?: string;
   skipRemaining: boolean;
+  issue?: string;
+  acceptPlan: boolean;
+  publish: boolean;
 };
 
 export type RunPluginCliOpts = {
@@ -167,6 +170,8 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
     forceEvidence: false,
     acceptPatch: false,
     skipRemaining: false,
+    acceptPlan: false,
+    publish: false,
   };
   const args = argv.slice(2);
   for (let i = 0; i < args.length; i++) {
@@ -212,6 +217,9 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
       if (name === "--scope") {
         out.scope = value;
       }
+      if (name === "--issue") {
+        out.issue = value;
+      }
       i = next;
       continue;
     }
@@ -233,6 +241,12 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
       }
       if (a === "--skip-remaining") {
         out.skipRemaining = true;
+      }
+      if (a === "--accept-plan") {
+        out.acceptPlan = true;
+      }
+      if (a === "--publish") {
+        out.publish = true;
       }
       continue;
     }
@@ -470,6 +484,26 @@ export async function runPluginCli(
           remaining: parsed.remaining,
           plan: parsed.plan,
           skipRemaining: parsed.skipRemaining,
+        },
+        env,
+        io,
+      );
+    } catch (err) {
+      return writeErr(io, err, platform);
+    }
+  }
+
+  if (parsed.pluginCommand === "issue-to-pr") {
+    try {
+      const { runIssueToPrCommand } = await import("./lib/issue/command.js");
+      return await runIssueToPrCommand(
+        platform,
+        {
+          remaining: parsed.remaining,
+          plan: parsed.plan,
+          issue: parsed.issue,
+          acceptPlan: parsed.acceptPlan,
+          publish: parsed.publish,
         },
         env,
         io,

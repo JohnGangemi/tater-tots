@@ -139,6 +139,7 @@ test("T-SK-01 each shipped skill is kebab-case with triggers and body under 500 
   assert.ok(names.includes("debug"));
   assert.ok(names.includes("review"));
   assert.ok(names.includes("finish"));
+  assert.ok(names.includes("issue-to-pr"));
   for (const name of names) {
     assert.ok(SKILL_NAME_RE.test(name), name);
     assert.ok(name.length <= SKILL_NAME_MAX, name);
@@ -159,7 +160,7 @@ test("T-SK-01 loadSkillBody and skill show load debug review finish", async () =
   const repo = makeRepo();
   const env = isolatedEnv(dataRoot);
   const ctx = await createContext({ repoPath: repo, env });
-  for (const name of ["debug", "review", "finish"] as const) {
+  for (const name of ["debug", "review", "finish", "issue-to-pr"] as const) {
     const body = loadSkillBody(ctx, name, shippedSkills);
     assert.match(body, /Personal override/);
     assert.match(body, /logical names/);

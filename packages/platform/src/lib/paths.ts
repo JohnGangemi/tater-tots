@@ -15,6 +15,8 @@ export type DevkitPaths = {
   overridesDir: string;
   proposalsDir: string;
   signalsFile: string;
+  historyDir: string;
+  progressDir: string;
   graphDir: string;
   cbmProjectFile: string;
   binDir: string;
@@ -116,6 +118,8 @@ export function userDataPaths(
     overridesDir,
     proposalsDir: join(overridesDir, "proposals"),
     signalsFile: join(overridesDir, "signals.jsonl"),
+    historyDir: join(overridesDir, "history"),
+    progressDir: join(devkitHome, "progress", repoId),
     graphDir,
     cbmProjectFile: join(graphDir, "cbm-project.json"),
     binDir: join(devkitHome, "bin"),

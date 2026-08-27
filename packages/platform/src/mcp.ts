@@ -14,6 +14,7 @@ import { graphImpact, graphSearch, graphSymbol } from "./lib/graph/tools.js";
 import { logPlatform } from "./lib/log.js";
 import type { EnvMap } from "./lib/paths.js";
 import { playbookLookup, playbookRecord } from "./lib/playbook/store.js";
+import { isValidProposalId, tuneAccept, tuneReject, tuneStatus } from "./lib/tune/store.js";
 
 export const MCP_SERVER_NAME = "coredevkit";
 export const MCP_SERVER_VERSION = "0.1.0";
@@ -26,6 +27,9 @@ export const MCP_TOOL_NAMES = [
   "playbook_record",
   "evidence_check",
   "adversarial_review",
+  "tune_status",
+  "tune_accept",
+  "tune_reject",
 ] as const;
 
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
@@ -116,6 +120,21 @@ const ADVERSARIAL_REVIEW_SCHEMA = {
   additionalProperties: false,
 };
 
+const TUNE_STATUS_SCHEMA = {
+  type: "object" as const,
+  properties: {},
+  additionalProperties: false,
+};
+
+const TUNE_PROPOSAL_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    proposal_id: { type: "string", minLength: 1, maxLength: 64 },
+  },
+  required: ["proposal_id"],
+  additionalProperties: false,
+};
+
 const TOOLS: Tool[] = [
   {
     name: "graph_search",
@@ -160,6 +179,26 @@ const TOOLS: Tool[] = [
       "Read-only review of a plan file. Does not edit the plan. Returns a verdict and at most 7 findings.",
     inputSchema: ADVERSARIAL_REVIEW_SCHEMA,
     annotations: { readOnlyHint: true },
+  },
+  {
+    name: "tune_status",
+    description:
+      "List pending skill-override proposal ids. Read-only. Does not write proposals or plugin directories.",
+    inputSchema: TUNE_STATUS_SCHEMA,
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "tune_accept",
+    description:
+      "Accept a proposal. Writes user-data only under DEVKIT_HOME/overrides. Does not write plugin or marketplace paths.",
+    inputSchema: TUNE_PROPOSAL_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "tune_reject",
+    description: "Reject a pending proposal. Does not write an override.",
+    inputSchema: TUNE_PROPOSAL_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false },
   },
 ];
 
@@ -277,6 +316,26 @@ function parseAdversarialReview(raw: unknown): { plan_path: string } {
   };
 }
 
+function parseTuneStatus(raw: unknown): Record<string, never> {
+  const obj = asObject(raw);
+  noExtra(obj, []);
+  return {};
+}
+
+function parseTuneProposal(raw: unknown): { proposal_id: string } {
+  const obj = asObject(raw);
+  noExtra(obj, ["proposal_id"]);
+  const proposal_id = readString(obj, "proposal_id", {
+    required: true,
+    min: 1,
+    max: 64,
+  }) as string;
+  if (!isValidProposalId(proposal_id)) {
+    throw new PlatformError("usage", "Invalid proposal id");
+  }
+  return { proposal_id };
+}
+
 function parsePlaybookRecord(raw: unknown): {
   raw_command: string;
   cwd: string;
@@ -374,6 +433,14 @@ async function dispatch(name: string, args: unknown, opts: McpRunOpts): Promise<
       return evidenceCheck(ctx, parsed.q);
     case "adversarial_review":
       return adversarialReview(ctx, parsed.q);
+    case "tune_status":
+      return tuneStatus(ctx);
+    case "tune_accept":
+      await tuneAccept(ctx, parsed.q.proposal_id);
+      return { ok: true };
+    case "tune_reject":
+      await tuneReject(ctx, parsed.q.proposal_id);
+      return { ok: true };
     default: {
       const _never: never = parsed;
       throw new PlatformError("not_found", `Unknown tool ${String(_never)}`);
@@ -397,7 +464,10 @@ type ParsedTool =
       };
     }
   | { tool: "evidence_check"; q: { command?: string; purpose?: string; force?: boolean } }
-  | { tool: "adversarial_review"; q: { plan_path: string } };
+  | { tool: "adversarial_review"; q: { plan_path: string } }
+  | { tool: "tune_status"; q: Record<string, never> }
+  | { tool: "tune_accept"; q: { proposal_id: string } }
+  | { tool: "tune_reject"; q: { proposal_id: string } };
 
 function parseToolArgs(tool: McpToolName, args: unknown): ParsedTool {
   switch (tool) {
@@ -415,6 +485,12 @@ function parseToolArgs(tool: McpToolName, args: unknown): ParsedTool {
       return { tool, q: parseEvidenceCheck(args) };
     case "adversarial_review":
       return { tool, q: parseAdversarialReview(args) };
+    case "tune_status":
+      return { tool, q: parseTuneStatus(args) };
+    case "tune_accept":
+      return { tool, q: parseTuneProposal(args) };
+    case "tune_reject":
+      return { tool, q: parseTuneProposal(args) };
     default: {
       const _never: never = tool;
       throw new PlatformError("not_found", `Unknown tool ${_never}`);

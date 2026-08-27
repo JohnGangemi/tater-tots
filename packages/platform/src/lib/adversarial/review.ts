@@ -3,6 +3,7 @@ import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { PlatformContext } from "../context.js";
 import { PlatformError } from "../errors.js";
+import { patternHash, recordSignal } from "../tune/store.js";
 import {
   checkCommands,
   checkPaths,
@@ -104,6 +105,7 @@ export async function adversarialReview(
     ...(await checkSymbols(ctx, extractSectionSymbols(text), gate)),
   ];
   const contract = applyFindingContract(findings);
+  await emitPatchSignals(ctx, contract.findings);
   return {
     verdict: contract.verdict,
     findings: contract.findings,
@@ -112,4 +114,33 @@ export async function adversarialReview(
     graph_ready: gate.ready,
     resolved_level,
   };
+}
+
+async function emitPatchSignals(
+  ctx: PlatformContext,
+  findings: AdversarialResult["findings"],
+): Promise<void> {
+  const seen = new Set<string>();
+  for (const finding of findings) {
+    if (finding.tag !== "patch-plan") {
+      continue;
+    }
+    const pattern_hash = patternHash(finding.category, finding.tag);
+    if (seen.has(pattern_hash)) {
+      continue;
+    }
+    seen.add(pattern_hash);
+    try {
+      await recordSignal(ctx, {
+        kind: "adversarial_patch_pattern",
+        fact: {
+          category: finding.category,
+          tag: finding.tag,
+          pattern_hash,
+        },
+      });
+    } catch {
+      // tuning must not fail review
+    }
+  }
 }

@@ -12,6 +12,15 @@ import { formatInitStdout, initGraph } from "./lib/graph/init.js";
 import { logPlatform } from "./lib/log.js";
 import { playbookList, playbookStats } from "./lib/playbook/store.js";
 import { COMMAND_SHOW_MAX, SHOW_DEFAULT, SHOW_MAX } from "./lib/playbook/types.js";
+import {
+  isValidProposalId,
+  isValidSkillName,
+  tuneAccept,
+  tuneReject,
+  tuneRevert,
+  tuneShow,
+  tuneStatus,
+} from "./lib/tune/store.js";
 import { runMcpServer } from "./mcp.js";
 
 export type CliArgs = {
@@ -309,6 +318,21 @@ export async function runCli(
     }
   }
 
+  if (args.command === "tune") {
+    try {
+      const parsed = parseTuneArgs(args.rest);
+      const ctx = await createContext({
+        repoPath: args.path,
+        configFile: args.config,
+        verification: args.verification,
+        env,
+      });
+      return await runTuneCli(ctx, parsed, io);
+    } catch (err) {
+      return writeError(io, err);
+    }
+  }
+
   if (args.command === "hook") {
     try {
       await runHookCommand({
@@ -443,6 +467,73 @@ function evidenceGateExit(result: EvidenceResult): number {
     return 2;
   }
   return 1;
+}
+
+type TuneCli =
+  | { sub: "status" }
+  | { sub: "show"; id: string }
+  | { sub: "accept"; id: string }
+  | { sub: "reject"; id: string }
+  | { sub: "revert"; skill: string };
+
+function parseTuneArgs(rest: string[]): TuneCli {
+  const sub = rest[0];
+  if (sub === "status") {
+    if (rest.length > 1) {
+      throw new PlatformError("usage", "tune status takes no extra arguments");
+    }
+    return { sub: "status" };
+  }
+  if (sub === "show" || sub === "accept" || sub === "reject") {
+    const id = rest[1];
+    if (!id || rest.length > 2) {
+      throw new PlatformError("usage", `tune ${sub} needs a proposal id`);
+    }
+    if (!isValidProposalId(id)) {
+      throw new PlatformError("usage", "Invalid proposal id");
+    }
+    return { sub, id };
+  }
+  if (sub === "revert") {
+    const skill = rest[1];
+    if (!skill || rest.length > 2) {
+      throw new PlatformError("usage", "tune revert needs a skill name");
+    }
+    if (!isValidSkillName(skill)) {
+      throw new PlatformError("usage", "Invalid skill name");
+    }
+    return { sub: "revert", skill };
+  }
+  throw new PlatformError(
+    "usage",
+    "Unknown tune command (use status, show, accept, reject, or revert)",
+  );
+}
+
+async function runTuneCli(ctx: PlatformContext, parsed: TuneCli, io: CliIo): Promise<number> {
+  if (parsed.sub === "status") {
+    const out = await tuneStatus(ctx);
+    io.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+    return 0;
+  }
+  if (parsed.sub === "show") {
+    const proposal = await tuneShow(ctx, parsed.id);
+    io.stdout.write(`${JSON.stringify(proposal, null, 2)}\n`);
+    return 0;
+  }
+  if (parsed.sub === "accept") {
+    await tuneAccept(ctx, parsed.id);
+    io.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+    return 0;
+  }
+  if (parsed.sub === "reject") {
+    await tuneReject(ctx, parsed.id);
+    io.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+    return 0;
+  }
+  await tuneRevert(ctx, parsed.skill);
+  io.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+  return 0;
 }
 
 async function runPlaybookCli(ctx: PlatformContext, rest: string[], io: CliIo): Promise<number> {

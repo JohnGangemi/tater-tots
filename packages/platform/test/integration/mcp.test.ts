@@ -158,8 +158,16 @@ test("tools/list has registered tools with design JSON Schema", async () => {
     assert.deepEqual(names, [...MCP_TOOL_NAMES].sort());
     assert.equal(listed.tools.length, MCP_TOOL_NAMES.length);
     assert.equal(
-      listed.tools.some((t) => t.name.startsWith("tune_")),
-      false,
+      listed.tools.some((t) => t.name === "tune_status"),
+      true,
+    );
+    assert.equal(
+      listed.tools.some((t) => t.name === "tune_accept"),
+      true,
+    );
+    assert.equal(
+      listed.tools.some((t) => t.name === "tune_reject"),
+      true,
     );
     assert.equal(
       listed.tools.some((t) => t.name === "adversarial_review"),
@@ -192,6 +200,17 @@ test("tools/list has registered tools with design JSON Schema", async () => {
     assert.equal(review?.inputSchema.additionalProperties, false);
     assert.equal(review?.annotations?.readOnlyHint, true);
     assert.match(review?.description ?? "", /does not edit|read-only/i);
+    const tuneStatus = listed.tools.find((t) => t.name === "tune_status");
+    assert.equal(tuneStatus?.inputSchema.type, "object");
+    assert.equal(tuneStatus?.inputSchema.additionalProperties, false);
+    assert.equal(tuneStatus?.annotations?.readOnlyHint, true);
+    assert.match(tuneStatus?.description ?? "", /read-only/i);
+    const tuneAccept = listed.tools.find((t) => t.name === "tune_accept");
+    assert.deepEqual(tuneAccept?.inputSchema.required, ["proposal_id"]);
+    assert.equal(tuneAccept?.inputSchema.additionalProperties, false);
+    assert.match(tuneAccept?.description ?? "", /user-data|overrides/i);
+    const tuneReject = listed.tools.find((t) => t.name === "tune_reject");
+    assert.deepEqual(tuneReject?.inputSchema.required, ["proposal_id"]);
   });
 });
 
@@ -328,6 +347,18 @@ test("bad tools/call does not create playbook dir", async () => {
     });
     assert.equal(isCallToolResult(badReview) && Boolean(badReview.isError), true);
     assert.equal((toolPayload(badReview).error as { code?: string }).code, "usage");
+    const badTune = await client.callTool({
+      name: "tune_accept",
+      arguments: {},
+    });
+    assert.equal(isCallToolResult(badTune) && Boolean(badTune.isError), true);
+    assert.equal((toolPayload(badTune).error as { code?: string }).code, "usage");
+    const badTuneId = await client.callTool({
+      name: "tune_accept",
+      arguments: { proposal_id: "../../../tmp/x" },
+    });
+    assert.equal(isCallToolResult(badTuneId) && Boolean(badTuneId.isError), true);
+    assert.equal((toolPayload(badTuneId).error as { code?: string }).code, "usage");
     assert.equal(existsSync(playbooks), false);
   });
   assert.equal(existsSync(playbooks), false);

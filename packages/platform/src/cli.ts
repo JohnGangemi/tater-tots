@@ -7,6 +7,7 @@ import { createContext, type PlatformContext } from "./lib/context.js";
 import { errorMessage, exitCodeFor, isPlatformError, PlatformError } from "./lib/errors.js";
 import type { HttpsGet } from "./lib/graph/cbm-fetch.js";
 import { formatInitStdout, initGraph } from "./lib/graph/init.js";
+import { runMcpServer } from "./mcp.js";
 import { playbookList, playbookStats } from "./lib/playbook/store.js";
 import { COMMAND_SHOW_MAX, SHOW_DEFAULT, SHOW_MAX } from "./lib/playbook/types.js";
 
@@ -237,6 +238,23 @@ export async function runCli(
         ...(io.httpsGet ? { httpsGet: io.httpsGet } : {}),
       });
       io.stdout.write(formatInitStdout(ctx, result));
+      return 0;
+    } catch (err) {
+      return writeError(io, err);
+    }
+  }
+
+  if (args.command === "mcp") {
+    if (args.rest.length > 0) {
+      return writeError(io, new PlatformError("usage", "mcp takes no extra arguments"));
+    }
+    try {
+      await runMcpServer({
+        env,
+        cwd: args.path ?? process.cwd(),
+        ...(args.config ? { configFile: args.config } : {}),
+        ...(args.verification ? { verification: args.verification } : {}),
+      });
       return 0;
     } catch (err) {
       return writeError(io, err);

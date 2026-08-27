@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "coredevkit": {
+      "command": "devkit",
+      "args": ["mcp"]
+    }
+  }
+}

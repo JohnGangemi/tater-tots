@@ -10,7 +10,8 @@
   },
   "files": [
     "dist",
-    "adapters"
+    "adapters",
+    "skills"
   ],
   "engines": {
     "node": ">=20"

@@ -43,3 +43,10 @@ export {
   type PlaybookStatsOut,
   type PurposeTag,
 } from "./lib/playbook/store.js";
+export {
+  evidenceCheck,
+  evidence_check,
+  type EvidenceInput,
+  type EvidenceResult,
+  type EvidenceVerdict,
+} from "./lib/evidence/check.js";

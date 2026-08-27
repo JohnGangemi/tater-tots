@@ -283,6 +283,33 @@ test("T-PL-01 render and start-coordinator write under user-data plans dir", asy
   assert.match(missCap.err(), /run devkit init/);
 });
 
+test("T-IN-P-04 graph mapping missing exits 3 and does not readdir the repo", async () => {
+  const graphState = readFileSync(
+    new URL("../../src/lib/plan/graph-state.ts", import.meta.url),
+    "utf8",
+  );
+  const planCmd = readFileSync(
+    new URL("../../src/lib/plan/command.ts", import.meta.url),
+    "utf8",
+  );
+  assert.equal(graphState.includes("readdir"), false);
+  assert.equal(planCmd.includes("readdir"), false);
+
+  const env = isolatedEnv(tmp("devkit-data-"));
+  const repo = makeRepo();
+  mkdirSync(join(repo, "src"), { recursive: true });
+  writeFileSync(join(repo, "src", "walk-me.ts"), "export {}\n");
+  const cap = captureIo();
+  const code = await runPluginCli(
+    ["node", "devkit", "--path", repo, "plan", "--goal", "no mapping"],
+    env,
+    cap.io,
+  );
+  assert.equal(code, 3, cap.err());
+  assert.match(cap.err(), /run devkit init/);
+  assert.doesNotMatch(cap.out() + cap.err(), /walk-me/);
+});
+
 test("render-plan-html wrapper omits --plan when no dir is given", async () => {
   const url = new URL(
     "../../skills/writing-plans/scripts/render-plan-html.js",

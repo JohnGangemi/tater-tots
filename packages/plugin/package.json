@@ -24,7 +24,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test test/unit/*.test.ts test/integration/*.test.ts",
-    "format": "prettier --write src test package.json tsconfig.json tsconfig.build.json",
+    "format": "prettier --write src test adapters package.json tsconfig.json tsconfig.build.json",
     "pretest": "pnpm --filter @coredevkit/platform build && tsc -p tsconfig.build.json",
     "pretypecheck": "pnpm --filter @coredevkit/platform build",
     "prebuild": "pnpm --filter @coredevkit/platform build"
@@ -35,6 +35,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "^20.14.0",
     "prettier": "^3.3.0",
     "tsx": "^4.19.0",

@@ -1,0 +1,6 @@
+# Use only when --plan is a directory inside the git repository.
+# Default plan files live in user-data. Do not add this when plans stay in DEVKIT_HOME.
+plan.intent.json
+plan.md
+plan.html
+plan.md.bak

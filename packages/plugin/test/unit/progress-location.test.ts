@@ -156,3 +156,27 @@ test("T-PRJ-01 project progress_location without gitignore exits 1 and writes no
   await assert.rejects(() => saveCoordinator(ctx, sample(ctx)), PluginError);
   assert.equal(existsSync(join(repo, ".devkit", "progress.yaml")), false);
 });
+
+test("progressFilePath honors --config plugin.progress_location", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const cfgDir = tmp("devkit-cfg-");
+  const configFile = join(cfgDir, "extra.yaml");
+  writeFileSync(configFile, "plugin:\n  progress_location: project\n");
+  const ctx = await createContext({
+    repoPath: repo,
+    env: isolatedEnv(dataRoot),
+  });
+  assert.match(progressFilePath(ctx), /[/\\]progress[/\\]/);
+  assert.throws(
+    () => progressFilePath(ctx, { configFile }),
+    (err: unknown) => {
+      assert.equal(err instanceof PluginError, true);
+      assert.match(
+        (err as PluginError).message,
+        /refusing \.devkit\/progress\.yaml/,
+      );
+      return true;
+    },
+  );
+});

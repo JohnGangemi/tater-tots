@@ -23,7 +23,11 @@ import { z } from "zod";
 import { PluginError } from "../errors.js";
 import { writeProgressAtomic } from "../fs-user.js";
 import { logPlugin } from "../log.js";
-import { loadPluginConfig, type PluginConfig } from "../plugin-config.js";
+import {
+  loadPluginConfig,
+  type LoadPluginConfigOpts,
+  type PluginConfig,
+} from "../plugin-config.js";
 import { worktreeHash } from "../worktree.js";
 import { resumeAfterMark, resumeStep } from "./resume.js";
 import {
@@ -33,6 +37,24 @@ import {
   type ProgressEvent,
   type StepStatus,
 } from "./types.js";
+
+export type CoordinatorOpts = LoadPluginConfigOpts & {
+  plugin?: PluginConfig;
+};
+
+export type MarkStepOpts = CoordinatorOpts & {
+  command_key?: string;
+};
+
+function pluginConfigFor(
+  ctx: PlatformContext,
+  opts?: CoordinatorOpts,
+): PluginConfig {
+  if (opts?.plugin) {
+    return opts.plugin;
+  }
+  return loadPluginConfig(ctx, opts);
+}
 
 const MAX_BYTES = 1024 * 1024;
 const MAX_EVENTS = 10_000;
@@ -192,9 +214,9 @@ function projectProgressIgnored(repoPath: string): boolean {
 
 export function progressFilePath(
   ctx: PlatformContext,
-  pluginCfg?: PluginConfig,
+  opts?: CoordinatorOpts,
 ): string {
-  const cfg = pluginCfg ?? loadPluginConfig(ctx);
+  const cfg = pluginConfigFor(ctx, opts);
   const { worktree_hash } = worktreeHash(ctx.repoPath);
   if (cfg.plugin.progress_location === "project") {
     if (!projectProgressIgnored(ctx.repoPath)) {
@@ -427,40 +449,26 @@ function shouldIngest(record: CoordinatorRecord): boolean {
   return false;
 }
 
-export async function loadCoordinator(
-  ctx: PlatformContext,
-): Promise<CoordinatorRecord> {
-  const cfg = loadPluginConfig(ctx);
-  const dest = progressFilePath(ctx, cfg);
-  const release = await acquireProgressLock(ctx, dest);
-  try {
-    if (!existsSync(dest)) {
-      throw new PluginError("not_found", "coordinator file not found");
-    }
-    let text: string;
-    try {
-      text = readFileSync(dest, "utf8");
-    } catch (err) {
-      throw new PluginError(
-        "io",
-        "Could not read coordinator file",
-        String(err),
-      );
-    }
-    const record = parseCoordinator(text);
-    record.resume_step_id = resumeStep(record);
-    return record;
-  } finally {
-    release();
+function readCoordinatorUnlocked(dest: string): CoordinatorRecord {
+  if (!existsSync(dest)) {
+    throw new PluginError("not_found", "coordinator file not found");
   }
+  let text: string;
+  try {
+    text = readFileSync(dest, "utf8");
+  } catch (err) {
+    throw new PluginError("io", "Could not read coordinator file", String(err));
+  }
+  const record = parseCoordinator(text);
+  record.resume_step_id = resumeStep(record);
+  return record;
 }
 
-export async function saveCoordinator(
+async function writeCoordinatorUnlocked(
   ctx: PlatformContext,
+  dest: string,
   record: CoordinatorRecord,
 ): Promise<void> {
-  const cfg = loadPluginConfig(ctx);
-  const dest = progressFilePath(ctx, cfg);
   const parsed = asRecord(record);
   if (parsed.events.length > MAX_EVENTS) {
     logPlugin(ctx.env, {
@@ -473,12 +481,61 @@ export async function saveCoordinator(
   if (Buffer.byteLength(text, "utf8") > MAX_BYTES) {
     throw new PluginError("io", "coordinator file exceeds 1 MiB");
   }
+  await writeProgressAtomic(dest, text, join(dirname(dest), ".tmp"));
+  if (shouldIngest(parsed)) {
+    await ingestProgress(ctx);
+  }
+}
+
+function applyMark(
+  record: CoordinatorRecord,
+  stepId: string,
+  status: StepStatus,
+  command_key?: string,
+): CoordinatorRecord {
+  const step = record.steps.find((s) => s.id === stepId);
+  if (!step) {
+    throw new PluginError("not_found", `Step not found: ${stepId}`);
+  }
+  step.status = status;
+  if (command_key) {
+    step.command_key = command_key;
+  }
+  const at = new Date().toISOString();
+  const ev: ProgressEvent = { step_title: step.step_title, status, at };
+  if (command_key) {
+    ev.command_key = command_key;
+  } else if (step.command_key) {
+    ev.command_key = step.command_key;
+  }
+  record.events.push(ev);
+  record.updated_at = at;
+  record.resume_step_id = resumeAfterMark(record, stepId, status);
+  return record;
+}
+
+export async function loadCoordinator(
+  ctx: PlatformContext,
+  opts?: CoordinatorOpts,
+): Promise<CoordinatorRecord> {
+  const dest = progressFilePath(ctx, opts);
   const release = await acquireProgressLock(ctx, dest);
   try {
-    await writeProgressAtomic(dest, text, join(dirname(dest), ".tmp"));
-    if (shouldIngest(parsed)) {
-      await ingestProgress(ctx);
-    }
+    return readCoordinatorUnlocked(dest);
+  } finally {
+    release();
+  }
+}
+
+export async function saveCoordinator(
+  ctx: PlatformContext,
+  record: CoordinatorRecord,
+  opts?: CoordinatorOpts,
+): Promise<void> {
+  const dest = progressFilePath(ctx, opts);
+  const release = await acquireProgressLock(ctx, dest);
+  try {
+    await writeCoordinatorUnlocked(ctx, dest, record);
   } finally {
     release();
   }
@@ -488,30 +545,23 @@ export async function markStep(
   ctx: PlatformContext,
   stepId: string,
   status: StepStatus,
-  extra?: { command_key?: string },
+  opts?: MarkStepOpts,
 ): Promise<CoordinatorRecord> {
   if (!(STEP_STATUSES as readonly string[]).includes(status)) {
     throw new PluginError("usage", `Invalid step status ${String(status)}`);
   }
-  const record = await loadCoordinator(ctx);
-  const step = record.steps.find((s) => s.id === stepId);
-  if (!step) {
-    throw new PluginError("not_found", `Step not found: ${stepId}`);
+  const dest = progressFilePath(ctx, opts);
+  const release = await acquireProgressLock(ctx, dest);
+  try {
+    const record = applyMark(
+      readCoordinatorUnlocked(dest),
+      stepId,
+      status,
+      opts?.command_key,
+    );
+    await writeCoordinatorUnlocked(ctx, dest, record);
+    return record;
+  } finally {
+    release();
   }
-  step.status = status;
-  if (extra?.command_key) {
-    step.command_key = extra.command_key;
-  }
-  const at = new Date().toISOString();
-  const ev: ProgressEvent = { step_title: step.step_title, status, at };
-  if (extra?.command_key) {
-    ev.command_key = extra.command_key;
-  } else if (step.command_key) {
-    ev.command_key = step.command_key;
-  }
-  record.events.push(ev);
-  record.updated_at = at;
-  record.resume_step_id = resumeAfterMark(record, stepId, status);
-  await saveCoordinator(ctx, record);
-  return record;
 }

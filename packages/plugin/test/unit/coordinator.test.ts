@@ -18,6 +18,7 @@ import { parse as parseYaml } from "yaml";
 import { createContext, ingestProgress } from "@coredevkit/platform";
 import { PluginError } from "../../src/lib/errors.js";
 import { writeProgressAtomic } from "../../src/lib/fs-user.js";
+import { resumeStep } from "../../src/lib/coordinator/resume.js";
 import {
   loadCoordinator,
   markStep,
@@ -27,6 +28,7 @@ import {
 import type {
   CoordinatorRecord,
   CoordinatorStep,
+  StackPr,
   StepStatus,
 } from "../../src/lib/coordinator/types.js";
 import { worktreeHash } from "../../src/lib/worktree.js";
@@ -395,4 +397,42 @@ test("T-CO-07 YAML key order emits events before steps", async () => {
   const parsed = parseYaml(text) as Record<string, unknown>;
   const keys = Object.keys(parsed);
   assert.ok(keys.indexOf("events") < keys.indexOf("steps"));
+});
+
+function stackPr(stack_id: string, phase: StackPr["phase"]): StackPr {
+  return {
+    stack_id,
+    branch: `feat/${stack_id}`,
+    base: "main",
+    pr_number: null,
+    pr_url: null,
+    pr_state: "none",
+    phase,
+    commit_sha: null,
+    allowed_paths: [],
+  };
+}
+
+test("resume after done stays in the current stack item", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const ctx = await createContext({
+    repoPath: repo,
+    env: isolatedEnv(dataRoot),
+  });
+  const s1 = step("S1", "A last", "done");
+  s1.stack_id = "A";
+  const s2 = step("S2", "B first", "pending");
+  s2.stack_id = "B";
+  const rec = sampleRecord(ctx, [s1, s2]);
+  rec.resume_step_id = "S1";
+  rec.stack = {
+    enabled: true,
+    default_branch: "main",
+    prs: [stackPr("A", "checked_out"), stackPr("B", "none")],
+  };
+  assert.equal(resumeStep(rec), null);
+
+  rec.stack.prs[0] = stackPr("A", "pr_created");
+  assert.equal(resumeStep(rec), "S2");
 });

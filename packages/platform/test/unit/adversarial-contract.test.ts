@@ -538,6 +538,10 @@ test("review rejects a plan.md under other user-data trees", async () => {
     (err: unknown) => {
       assert.equal(err instanceof PlatformError, true);
       assert.equal((err as PlatformError).code, "usage");
+      assert.equal(
+        (err as PlatformError).message,
+        "plan_path must be inside the repo or DEVKIT_HOME/plans",
+      );
       return true;
     },
   );

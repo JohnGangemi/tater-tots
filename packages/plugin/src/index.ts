@@ -28,6 +28,7 @@ export type {
   PlatformModule,
   PluginConfig,
   SubagentRole,
+  LoadPluginConfigOpts,
   WorktreeId,
   AdversarialStatus,
   CoordinatorRecord,
@@ -35,4 +36,6 @@ export type {
   ProgressEvent,
   StackPr,
   StepStatus,
+  CoordinatorOpts,
+  MarkStepOpts,
 } from "./lib/index.js";

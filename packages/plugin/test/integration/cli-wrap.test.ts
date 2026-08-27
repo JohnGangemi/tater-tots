@@ -238,3 +238,36 @@ test("T-IN-P-11 workspace bin is the plugin wrapper and help lists plan/implemen
   assert.match(pnpmHelp, /\bplan\b/);
   assert.match(pnpmHelp, /\bimplement\b/);
 });
+
+test("T-IN-P-11 --path dir --help lists plan and implement", async () => {
+  const repo = makeRepo();
+  const env = isolatedEnv(tmp("devkit-data-"));
+  const cap = captureIo();
+  const code = await runPluginCli(
+    ["node", "devkit", "--path", repo, "--help"],
+    env,
+    cap.io,
+  );
+  assert.equal(code, 0, cap.err());
+  assert.match(cap.out(), /\bplan\b/);
+  assert.match(cap.out(), /\bimplement\b/);
+  assert.equal(cap.out(), HELP);
+
+  const capEq = captureIo();
+  const codeEq = await runPluginCli(
+    ["node", "devkit", `--path=${repo}`, "--help"],
+    env,
+    capEq.io,
+  );
+  assert.equal(codeEq, 0, capEq.err());
+  assert.equal(capEq.out(), HELP);
+
+  const capBad = captureIo();
+  const codeBad = await runPluginCli(
+    ["node", "devkit", "--path"],
+    env,
+    capBad.io,
+  );
+  assert.equal(codeBad, 1);
+  assert.match(capBad.err(), /Flag --path needs a value/);
+});

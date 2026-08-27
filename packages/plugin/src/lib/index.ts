@@ -10,6 +10,7 @@ export {
   checkerName,
   type PluginConfig,
   type SubagentRole,
+  type LoadPluginConfigOpts,
 } from "./plugin-config.js";
 export { writeProgressAtomic } from "./fs-user.js";
 export { logPlugin } from "./log.js";
@@ -22,6 +23,8 @@ export {
   progressFilePath,
   parseCoordinator,
   stringifyCoordinator,
+  type CoordinatorOpts,
+  type MarkStepOpts,
 } from "./coordinator/store.js";
 export { resumeStep } from "./coordinator/resume.js";
 export type {

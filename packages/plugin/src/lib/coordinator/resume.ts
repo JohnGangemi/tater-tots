@@ -1,12 +1,22 @@
-import { TERMINAL, type CoordinatorRecord, type StepStatus } from "./types.js";
+import {
+  TERMINAL,
+  type CoordinatorRecord,
+  type StackPr,
+  type StepStatus,
+} from "./types.js";
+
+function currentStackItem(record: CoordinatorRecord): StackPr | undefined {
+  return record.stack.prs.find((p) => p.phase !== "pr_created");
+}
 
 function firstNonTerminal(record: CoordinatorRecord): string | null {
   let pool = record.steps;
   if (record.stack.enabled) {
-    const item = record.stack.prs.find((p) => p.phase === "checked_out");
-    if (item) {
-      pool = record.steps.filter((s) => s.stack_id === item.stack_id);
+    const item = currentStackItem(record);
+    if (!item) {
+      return null;
     }
+    pool = record.steps.filter((s) => s.stack_id === item.stack_id);
   }
   const next = pool.find((s) => !TERMINAL.has(s.status));
   return next?.id ?? null;

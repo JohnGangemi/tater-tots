@@ -67,7 +67,7 @@ function resolvePlanPath(ctx: PlatformContext, planPath: string): string {
   }
   // Jail on the resolved path first so outside files are not probed.
   if (!isAllowedPlanPath(ctx, abs)) {
-    throw new PlatformError("usage", "plan_path must be inside the repo");
+    throw new PlatformError("usage", "plan_path must be inside the repo or DEVKIT_HOME/plans");
   }
   let real: string;
   try {
@@ -76,7 +76,7 @@ function resolvePlanPath(ctx: PlatformContext, planPath: string): string {
     throw new PlatformError("not_found", `Plan file not found: ${planPath}`);
   }
   if (!isAllowedPlanPath(ctx, real)) {
-    throw new PlatformError("usage", "plan_path must be inside the repo");
+    throw new PlatformError("usage", "plan_path must be inside the repo or DEVKIT_HOME/plans");
   }
   if (!real.endsWith(".md")) {
     throw new PlatformError("usage", "plan_path must end with .md");

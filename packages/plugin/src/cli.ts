@@ -100,6 +100,7 @@ export type PluginCliIo = {
 export type PluginArgv = {
   help: boolean;
   pluginCommand?: string;
+  platformCommand?: string;
   pluginRest: string[];
   plan?: string;
   remaining: string[];
@@ -170,11 +171,14 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
       continue;
     }
     if (PLATFORM_VALUE_FLAGS.has(name)) {
-      remaining.push(a);
-      if (!a.includes("=") && args[i + 1] && !args[i + 1]!.startsWith("-")) {
-        remaining.push(args[i + 1]!);
-        i += 1;
+      const { value, next } = takeValue(args, i, name);
+      if (a.startsWith(`${name}=`)) {
+        remaining.push(a);
+      } else {
+        remaining.push(name);
+        remaining.push(value);
       }
+      i = next;
       continue;
     }
     if (a === "--fetch-cbm") {
@@ -198,17 +202,11 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
       continue;
     }
     remaining.push(a);
-  }
-  return out;
-}
-
-function remainingHasCommand(remaining: string[]): boolean {
-  for (const a of remaining.slice(2)) {
-    if (a && !a.startsWith("-")) {
-      return true;
+    if (!out.platformCommand) {
+      out.platformCommand = a;
     }
   }
-  return false;
+  return out;
 }
 
 function writeErr(
@@ -271,12 +269,11 @@ export async function runPluginCli(
     return writeErr(io, err);
   }
 
-  const platformCommand = remainingHasCommand(parsed.remaining);
-  if (parsed.help && !parsed.pluginCommand && !platformCommand) {
+  if (parsed.help && !parsed.pluginCommand && !parsed.platformCommand) {
     io.stdout.write(HELP);
     return 0;
   }
-  if (!parsed.pluginCommand && !platformCommand) {
+  if (!parsed.pluginCommand && !parsed.platformCommand) {
     io.stdout.write(HELP);
     return 0;
   }

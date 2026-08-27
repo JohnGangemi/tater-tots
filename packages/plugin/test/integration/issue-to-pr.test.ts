@@ -137,6 +137,21 @@ function makeBin(logFile: string, countFile: string): string {
   return dir;
 }
 
+function makeGitBin(): string {
+  const dir = tmp("devkit-i2p-gitbin-");
+  symlinkSync(whichBin("git"), join(dir, "git"));
+  return dir;
+}
+
+function ghMissingCount(err: string): number {
+  return (err.match(/PR not opened because gh is missing/g) ?? []).length;
+}
+
+function flagValue(args: string[], flag: string): string | undefined {
+  const i = args.indexOf(flag);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
 function isolatedEnv(
   dataRoot: string,
   binDir: string,
@@ -203,13 +218,15 @@ Goal: Close issue 12.
 none
 `;
 
-function stackedIntent(agentPlan: string): string {
+function planIntent(agentPlan: string, stacked: boolean): string {
   return `${JSON.stringify(
     {
       version: 1,
       title: "Add file A",
       summary: "Close issue 12.",
-      goal: "Publish one stacked pull request from the issue.",
+      goal: stacked
+        ? "Publish one stacked pull request from the issue."
+        : "Publish one pull request from the issue.",
       agent_plan: agentPlan,
       theme_default: "system",
       non_goals: [],
@@ -233,16 +250,18 @@ function stackedIntent(agentPlan: string): string {
         },
       ],
       sequences: [],
-      stack: [
-        {
-          id: "A",
-          title: "Item A",
-          branch: "feat/a",
-          base: "@default",
-          step_ids: ["S1"],
-          depends_on: [],
-        },
-      ],
+      stack: stacked
+        ? [
+            {
+              id: "A",
+              title: "Item A",
+              branch: "feat/a",
+              base: "@default",
+              step_ids: ["S1"],
+              depends_on: [],
+            },
+          ]
+        : [],
       risks: [],
     },
     null,
@@ -250,10 +269,13 @@ function stackedIntent(agentPlan: string): string {
   )}\n`;
 }
 
-function writePlan(planDir: string): ReturnType<typeof planFilePaths> {
+function writePlan(
+  planDir: string,
+  stacked = true,
+): ReturnType<typeof planFilePaths> {
   const paths = planFilePaths(planDir);
   mkdirSync(planDir, { recursive: true });
-  writeFileSync(paths.intentPath, stackedIntent(paths.agentPlan));
+  writeFileSync(paths.intentPath, planIntent(paths.agentPlan, stacked));
   writeFileSync(paths.agentPlan, PLAN_MD);
   return paths;
 }
@@ -516,4 +538,142 @@ test("T-I2P-02 missing --accept-plan keeps pipeline refine", async () => {
   );
   assert.equal(existsSync(sow), true);
   assert.equal(existsSync(join(planDir, "sow.md")), false);
+});
+
+async function acceptSinglePr(
+  repo: string,
+  env: NodeJS.ProcessEnv,
+  planDir: string,
+): Promise<void> {
+  const cap = captureIo();
+  const code = await runPluginCli(
+    [
+      "node",
+      "devkit",
+      "--path",
+      repo,
+      "--plan",
+      planDir,
+      "--verification",
+      "off",
+      "issue-to-pr",
+      "--issue",
+      "12",
+      "--accept-plan",
+    ],
+    env,
+    cap.io,
+  );
+  assert.equal(code, 0, cap.err());
+  writeFileSync(join(repo, "a.txt"), "a\n");
+  const mark = captureIo();
+  const markCode = await runPluginCli(
+    [
+      "node",
+      "devkit",
+      "--path",
+      repo,
+      "--plan",
+      planDir,
+      "--verification",
+      "off",
+      "implement",
+      "--mark",
+      "done",
+    ],
+    env,
+    mark.io,
+  );
+  assert.equal(markCode, 0, mark.err());
+}
+
+test("single-PR path marks done then publishes one gh pr create", async () => {
+  const logFile = join(tmp("devkit-i2p-gh-log-"), "gh.log");
+  const countFile = join(tmp("devkit-i2p-gh-count-"), "n");
+  writeFileSync(logFile, "");
+  const env = isolatedEnv(tmp("devkit-data-"), makeBin(logFile, countFile));
+  const repo = makeRepo();
+  addOrigin(repo);
+  const ctx = await createContext({ repoPath: repo, env });
+  writeMapping(ctx);
+  const wt = worktreeHash(ctx.repoPath);
+  const planDir = join(ctx.paths.plansDir, wt.worktree_hash);
+  writePlan(planDir, false);
+  await acceptSinglePr(repo, env, planDir);
+
+  const recBefore = await loadCoordinator(ctx);
+  assert.equal(recBefore.stack.enabled, false);
+  assert.equal(recBefore.source, "issue-to-pr");
+  assert.equal(recBefore.steps[0]?.status, "done");
+
+  const cap = captureIo();
+  const code = await runPluginCli(
+    [
+      "node",
+      "devkit",
+      "--path",
+      repo,
+      "--plan",
+      planDir,
+      "--verification",
+      "off",
+      "issue-to-pr",
+      "--publish",
+    ],
+    env,
+    cap.io,
+  );
+  assert.equal(code, 0, cap.err());
+  const creates = prCreates(logFile);
+  assert.equal(creates.length, 1);
+  assert.equal(flagValue(creates[0] ?? [], "--base"), "main");
+  assert.equal(flagValue(creates[0] ?? [], "--head"), "issue-12");
+  assert.equal(flagValue(creates[0] ?? [], "--title"), "Add file A");
+  assert.equal(flagValue(creates[0] ?? [], "--body"), "Closes #12.");
+  const rec = await loadCoordinator(ctx);
+  assert.equal(rec.pipeline_phase, "complete");
+  assert.equal(rec.stack.enabled, false);
+  assert.equal(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]), "issue-12");
+});
+
+test("single-PR gh missing keeps local issue branch and skips pr create", async () => {
+  const logFile = join(tmp("devkit-i2p-gh-log-"), "gh.log");
+  const countFile = join(tmp("devkit-i2p-gh-count-"), "n");
+  writeFileSync(logFile, "");
+  const dataRoot = tmp("devkit-data-");
+  const envGh = isolatedEnv(dataRoot, makeBin(logFile, countFile));
+  const repo = makeRepo();
+  addOrigin(repo);
+  const ctx = await createContext({ repoPath: repo, env: envGh });
+  writeMapping(ctx);
+  const wt = worktreeHash(ctx.repoPath);
+  const planDir = join(ctx.paths.plansDir, wt.worktree_hash);
+  writePlan(planDir, false);
+  await acceptSinglePr(repo, envGh, planDir);
+
+  const envNoGh = isolatedEnv(dataRoot, makeGitBin());
+  const cap = captureIo();
+  const code = await runPluginCli(
+    [
+      "node",
+      "devkit",
+      "--path",
+      repo,
+      "--plan",
+      planDir,
+      "--verification",
+      "off",
+      "issue-to-pr",
+      "--publish",
+    ],
+    envNoGh,
+    cap.io,
+  );
+  assert.equal(code, 0, cap.err());
+  assert.equal(ghMissingCount(cap.err()), 1);
+  const packet = parsePacket(cap.out());
+  assert.notEqual(packet.hint, "PR not opened because gh is missing.");
+  assert.equal(prCreates(logFile).length, 0);
+  git(repo, ["rev-parse", "--verify", "issue-12"]);
+  assert.equal(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]), "issue-12");
 });

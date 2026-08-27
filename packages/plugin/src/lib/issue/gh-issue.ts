@@ -137,7 +137,6 @@ export function formatSow(issue: IssueSnap): string {
           .join("\n\n")
       : "(none)";
   const body = issue.body.trim() ? issue.body : "(empty)";
-  // Leading '>' makes YAML parse this file as one string, not progress rows.
   return `> Statement of work.
 
 - Issue number: ${issue.number}

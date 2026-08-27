@@ -219,7 +219,7 @@ async function publishSinglePr(opts: {
   if (!hasGh) {
     io.stderr.write(`devkit: ${GH_MISSING_MSG}\n`);
     await write(record);
-    return { record, hint: GH_MISSING_MSG };
+    return { record, hint: "issue-to-pr complete" };
   }
   if (!remote) {
     await write(record);
@@ -239,7 +239,7 @@ async function publishSinglePr(opts: {
   if (created.missing) {
     io.stderr.write(`devkit: ${GH_MISSING_MSG}\n`);
     await write(record);
-    return { record, hint: GH_MISSING_MSG };
+    return { record, hint: "issue-to-pr complete" };
   }
   record.pipeline_phase = "complete";
   touch(record);

@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, test } from "node:test";
 import { parsePluginArgv } from "../../src/cli.js";
 import {
   formatSow,
@@ -6,8 +10,20 @@ import {
   parseIssueRef,
 } from "../../src/lib/issue/gh-issue.js";
 import { draftPhase, sowFilePath } from "../../src/lib/issue/pipeline.js";
-import { test } from "node:test";
-import { join } from "node:path";
+
+const dirs: string[] = [];
+
+function tmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  dirs.push(dir);
+  return dir;
+}
+
+after(() => {
+  for (const dir of dirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("parsePluginArgv stores issue-to-pr flags", () => {
   const parsed = parsePluginArgv([
@@ -75,4 +91,7 @@ test("sowFilePath is under progressDir not plan dir", () => {
 
 test("draftPhase is refine when plan.md exists", () => {
   assert.equal(draftPhase("/no/such/plan.md"), "draft_plan");
+  const planMd = join(tmp("devkit-i2p-draft-"), "plan.md");
+  writeFileSync(planMd, "# plan\n");
+  assert.equal(draftPhase(planMd), "refine");
 });

@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { PlatformContext } from "../context.js";
 import { PlatformError } from "../errors.js";
+import { PROPOSAL_ID_MAX, PROPOSAL_ID_RE } from "./types.js";
 
 export const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const SKILL_NAME_MAX = 64;
@@ -10,6 +11,10 @@ const FORBIDDEN_DIR = new Set(["plugins", "marketplace", "node_modules"]);
 
 export function isValidSkillName(skill: string): boolean {
   return skill.length > 0 && skill.length <= SKILL_NAME_MAX && SKILL_NAME_RE.test(skill);
+}
+
+export function isValidProposalId(id: string): boolean {
+  return id.length > 0 && id.length <= PROPOSAL_ID_MAX && PROPOSAL_ID_RE.test(id);
 }
 
 function abs(p: string): string {
@@ -51,10 +56,11 @@ export function hasForbiddenDir(p: string): boolean {
     if (seg === undefined) {
       continue;
     }
-    if (FORBIDDEN_DIR.has(seg)) {
+    const folded = seg.toLowerCase();
+    if (FORBIDDEN_DIR.has(folded)) {
       return true;
     }
-    if (seg === ".claude" && dirs[i + 1] === "plugins") {
+    if (folded === ".claude" && dirs[i + 1]?.toLowerCase() === "plugins") {
       return true;
     }
   }
@@ -67,6 +73,15 @@ function deny(): never {
     "Override path is not allowed",
     "Writes stay under DEVKIT_HOME/overrides",
   );
+}
+
+/** Realpath an existing ancestor, then append the missing tail. */
+function resolveLogical(p: string): string {
+  const absP = abs(p);
+  const existing = firstExisting(absP);
+  const realExisting = tryRealpath(existing);
+  const rel = relative(existing, absP);
+  return rel ? resolve(realExisting, rel) : realExisting;
 }
 
 /** Refuse plugin, marketplace, and node_modules trees. Stay under user-data overrides. */
@@ -82,17 +97,14 @@ export function assertOverrideAllowed(ctx: PlatformContext, dest: string): strin
     deny();
   }
 
-  const realExisting = tryRealpath(firstExisting(destAbs));
-  if (hasForbiddenDir(realExisting)) {
+  const realDest = resolveLogical(destAbs);
+  const realRoot = resolveLogical(overridesRoot);
+  const realRepo = resolveLogical(repoOverrides);
+  if (hasForbiddenDir(realDest) || hasForbiddenDir(realRoot) || hasForbiddenDir(realRepo)) {
     deny();
   }
-  if (existsSync(destAbs) && hasForbiddenDir(tryRealpath(destAbs))) {
-    deny();
-  }
-  if (existsSync(repoOverrides) && hasForbiddenDir(tryRealpath(repoOverrides))) {
-    deny();
-  }
-  if (existsSync(overridesRoot) && hasForbiddenDir(tryRealpath(overridesRoot))) {
+  // Real dest must stay under the real DEVKIT_HOME/overrides tree, not a repo-id symlink.
+  if (!isInside(realRoot, realDest) || !isInside(realRepo, realDest)) {
     deny();
   }
   return destAbs;
@@ -106,6 +118,9 @@ export function overrideMdPath(ctx: PlatformContext, skill: string): string {
 }
 
 export function proposalFilePath(ctx: PlatformContext, id: string): string {
+  if (!isValidProposalId(id)) {
+    throw new PlatformError("usage", "Invalid proposal id");
+  }
   return join(ctx.paths.proposalsDir, `${id}.json`);
 }
 

@@ -14,7 +14,7 @@ import { graphImpact, graphSearch, graphSymbol } from "./lib/graph/tools.js";
 import { logPlatform } from "./lib/log.js";
 import type { EnvMap } from "./lib/paths.js";
 import { playbookLookup, playbookRecord } from "./lib/playbook/store.js";
-import { tuneAccept, tuneReject, tuneStatus } from "./lib/tune/store.js";
+import { isValidProposalId, tuneAccept, tuneReject, tuneStatus } from "./lib/tune/store.js";
 
 export const MCP_SERVER_NAME = "coredevkit";
 export const MCP_SERVER_VERSION = "0.1.0";
@@ -182,7 +182,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "tune_status",
-    description: "List pending skill-override proposal ids. Does not write plugin directories.",
+    description:
+      "List pending skill-override proposal ids. Read-only. Does not write proposals or plugin directories.",
     inputSchema: TUNE_STATUS_SCHEMA,
     annotations: { readOnlyHint: true },
   },
@@ -324,9 +325,15 @@ function parseTuneStatus(raw: unknown): Record<string, never> {
 function parseTuneProposal(raw: unknown): { proposal_id: string } {
   const obj = asObject(raw);
   noExtra(obj, ["proposal_id"]);
-  return {
-    proposal_id: readString(obj, "proposal_id", { required: true, min: 1, max: 64 }) as string,
-  };
+  const proposal_id = readString(obj, "proposal_id", {
+    required: true,
+    min: 1,
+    max: 64,
+  }) as string;
+  if (!isValidProposalId(proposal_id)) {
+    throw new PlatformError("usage", "Invalid proposal id");
+  }
+  return { proposal_id };
 }
 
 function parsePlaybookRecord(raw: unknown): {

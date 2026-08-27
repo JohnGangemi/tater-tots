@@ -8,6 +8,7 @@ import { logPlatform } from "../log.js";
 import {
   assertOverrideAllowed,
   historyFilePath,
+  isValidProposalId,
   isValidSkillName,
   overrideMdPath,
   proposalFilePath,
@@ -24,8 +25,6 @@ import {
 import {
   DEFAULT_TUNE_SKILL,
   OVERRIDE_MD_MAX_LINES,
-  PROPOSAL_ID_MAX,
-  PROPOSAL_ID_RE,
   type Proposal,
   type ProposalStatus,
   type Signal,
@@ -49,10 +48,6 @@ function isProposalStatus(value: unknown): value is ProposalStatus {
   return (
     value === "pending" || value === "accepted" || value === "rejected" || value === "reverted"
   );
-}
-
-export function isValidProposalId(id: string): boolean {
-  return id.length > 0 && id.length <= PROPOSAL_ID_MAX && PROPOSAL_ID_RE.test(id);
 }
 
 function utcStamp(d = new Date()): string {
@@ -273,18 +268,30 @@ export function writeProposal(ctx: PlatformContext, proposal: Proposal): string 
   return next.id;
 }
 
-function pendingGroupKeys(ctx: PlatformContext): Set<string> {
-  const keys = new Set<string>();
+function groupState(ctx: PlatformContext): {
+  pending: Set<string>;
+  cutoff: Map<string, string>;
+} {
+  const pending = new Set<string>();
+  const cutoff = new Map<string, string>();
   for (const p of listProposals(ctx)) {
-    if (p.status !== "pending" || p.source_facts.length === 0) {
+    if (p.source_facts.length === 0) {
       continue;
     }
     const first = p.source_facts[0];
-    if (first) {
-      keys.add(groupKey(first));
+    if (!first) {
+      continue;
+    }
+    const key = groupKey(first);
+    if (p.status === "pending") {
+      pending.add(key);
+    }
+    const prev = cutoff.get(key);
+    if (prev === undefined || p.created_at > prev) {
+      cutoff.set(key, p.created_at);
     }
   }
-  return keys;
+  return { pending, cutoff };
 }
 
 export async function proposeFromSignals(ctx: PlatformContext): Promise<string[]> {
@@ -294,7 +301,7 @@ export async function proposeFromSignals(ctx: PlatformContext): Promise<string[]
   const windowRuns = Math.max(1, ctx.config.tuning.window_runs);
   const minRepeats = Math.max(1, ctx.config.tuning.min_repeats);
   const signals = readSignals(ctx.paths.signalsFile);
-  const existing = pendingGroupKeys(ctx);
+  const existing = groupState(ctx);
   const written: string[] = [];
   const kinds: SignalKind[] = [
     "evidence_fail_then_success",
@@ -316,13 +323,15 @@ export async function proposeFromSignals(ctx: PlatformContext): Promise<string[]
       }
     }
     for (const [key, facts] of groups) {
-      if (facts.length < minRepeats) {
+      if (existing.pending.has(key)) {
         continue;
       }
-      if (existing.has(key)) {
+      const after = existing.cutoff.get(key);
+      const counted = after ? facts.filter((s) => s.at > after) : facts;
+      if (counted.length < minRepeats) {
         continue;
       }
-      const first = facts[0];
+      const first = counted[0];
       if (!first) {
         continue;
       }
@@ -336,16 +345,17 @@ export async function proposeFromSignals(ctx: PlatformContext): Promise<string[]
         skill,
         created_at: new Date().toISOString(),
         status: "pending",
-        source_facts: facts,
-        repeats: facts.length,
+        source_facts: counted,
+        repeats: counted.length,
         window_runs: windowRuns,
-        override_md: buildOverrideMd(facts),
+        override_md: buildOverrideMd(counted),
       };
       const wrote = writeProposal(ctx, proposal);
       if (!wrote) {
         continue;
       }
-      existing.add(key);
+      existing.pending.add(key);
+      existing.cutoff.set(key, proposal.created_at);
       written.push(wrote);
       if (ctx.config.tuning.auto_accept) {
         await tuneAccept(ctx, wrote);
@@ -418,8 +428,6 @@ export async function ingestProgress(ctx: PlatformContext): Promise<void> {
 }
 
 export async function tuneStatus(ctx: PlatformContext): Promise<TuneStatusOut> {
-  await ingestProgress(ctx);
-  await proposeFromSignals(ctx);
   const pending = listProposals(ctx)
     .filter((p) => p.status === "pending" && p.source_facts.length > 0)
     .map((p) => p.id)
@@ -431,7 +439,7 @@ export async function tuneStatus(ctx: PlatformContext): Promise<TuneStatusOut> {
 }
 
 export async function tuneShow(ctx: PlatformContext, id: string): Promise<Proposal> {
-  if (!id || id.length > PROPOSAL_ID_MAX) {
+  if (!isValidProposalId(id)) {
     throw new PlatformError("usage", "Invalid proposal id");
   }
   const proposal = loadProposalFile(proposalFilePath(ctx, id));
@@ -442,7 +450,7 @@ export async function tuneShow(ctx: PlatformContext, id: string): Promise<Propos
 }
 
 function loadPending(ctx: PlatformContext, id: string): Proposal {
-  if (!id || id.length > PROPOSAL_ID_MAX) {
+  if (!isValidProposalId(id)) {
     throw new PlatformError("usage", "Invalid proposal id");
   }
   const proposal = loadProposalFile(proposalFilePath(ctx, id));
@@ -516,5 +524,5 @@ export function patternHash(category: string, tag: string): string {
   return createHash("sha256").update(`${category}|${tag}`, "utf8").digest("hex").slice(0, 16);
 }
 
-export { isValidSkillName, overrideMdPath } from "./jail.js";
+export { isValidProposalId, isValidSkillName, overrideMdPath } from "./jail.js";
 export type { Proposal, Signal, SignalKind, TuneStatusOut } from "./types.js";

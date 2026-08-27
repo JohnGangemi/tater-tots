@@ -22,7 +22,9 @@ import { PlatformError } from "../../src/lib/errors.js";
 import { hasForbiddenDir } from "../../src/lib/tune/jail.js";
 import {
   ingestProgress,
+  listProposals,
   overrideMdPath,
+  proposeFromSignals,
   recordSignal,
   tuneAccept,
   tuneReject,
@@ -169,9 +171,12 @@ test("T-TN-01 tune_accept path escapes to plugins and marketplace and is not wri
   assert.equal(hasForbiddenDir("/tmp/app/marketplace/skill/SKILL.md"), true);
   assert.equal(hasForbiddenDir("/tmp/app/node_modules/pkg/SKILL.md"), true);
   assert.equal(hasForbiddenDir("/tmp/app/.claude/plugins/x/SKILL.md"), true);
+  assert.equal(hasForbiddenDir("/tmp/app/Plugins/skill/SKILL.md"), true);
+  assert.equal(hasForbiddenDir("/tmp/app/.claude/Plugins/x/SKILL.md"), true);
+  assert.equal(hasForbiddenDir("/tmp/app/NODE_MODULES/pkg/SKILL.md"), true);
   assert.equal(hasForbiddenDir("/tmp/devkit/overrides/id/plugins.override.md"), false);
 
-  for (const banned of ["plugins", "marketplace", "node_modules"] as const) {
+  for (const banned of ["plugins", "marketplace", "node_modules", "Plugins"] as const) {
     const root = tmp("devkit-tn-root-");
     const dataRoot = join(root, banned, "data");
     mkdirSync(dataRoot, { recursive: true });
@@ -224,6 +229,39 @@ test("T-TN-01 tune_accept path escapes to plugins and marketplace and is not wri
   );
   assert.equal(existsSync(join(plugins, "using-coredevkit.override.md")), false);
   assert.equal(listMd(plugins).length, 0);
+
+  const claudeRoot = tmp("devkit-tn-claude-");
+  const claudeData = join(claudeRoot, ".claude", "Plugins", "data");
+  mkdirSync(claudeData, { recursive: true });
+  const claudeCtx = await createContext({
+    repoPath: makeRepo(),
+    env: isolatedEnv(claudeData),
+  });
+  const claudePlanted = plantProposal(claudeCtx);
+  await assert.rejects(
+    () => tuneAccept(claudeCtx, claudePlanted.id),
+    (err: unknown) =>
+      err instanceof PlatformError && (err.code === "denied" || err.code === "usage"),
+  );
+  assert.equal(existsSync(overrideMdPath(claudeCtx, claudePlanted.skill)), false);
+
+  const dataRoot2 = tmp("devkit-tn-data-");
+  const ctx2 = await createContext({ repoPath: makeRepo(), env: isolatedEnv(dataRoot2) });
+  const planted2 = plantProposal(ctx2, { id: "tp-20260826-aaaabbbb" });
+  const outside = tmp("devkit-tn-out-");
+  const aside2 = `${ctx2.paths.overridesDir}.aside`;
+  renameSync(ctx2.paths.overridesDir, aside2);
+  symlinkSync(outside, ctx2.paths.overridesDir);
+  mkdirSync(join(outside, "proposals"), { recursive: true });
+  writeFileSync(
+    join(outside, "proposals", `${planted2.id}.json`),
+    readFileSync(join(aside2, "proposals", `${planted2.id}.json`)),
+  );
+  await assert.rejects(
+    () => tuneAccept(ctx2, planted2.id),
+    (err: unknown) => err instanceof PlatformError && err.code === "denied",
+  );
+  assert.equal(existsSync(join(outside, "using-coredevkit.override.md")), false);
 });
 
 test("T-TN-02 proposal without source_facts is not written", async () => {
@@ -320,6 +358,8 @@ test("accept writes override under user-data; reject and revert do not leak", as
   assert.equal(existsSync(overrideMdPath(ctx, "using-coredevkit")), false);
   const rejected = await tuneShow(ctx, id);
   assert.equal(rejected.status, "rejected");
+  await proposeFromSignals(ctx);
+  assert.deepEqual((await tuneStatus(ctx)).pending, []);
 
   const second = plantProposal(ctx, { id: "tp-20260826-ccccdddd" });
   await tuneAccept(ctx, second.id);
@@ -329,6 +369,9 @@ test("accept writes override under user-data; reject and revert do not leak", as
   assert.match(readFileSync(dest, "utf8"), /Personal override/);
   const accepted = await tuneShow(ctx, second.id);
   assert.equal(accepted.status, "accepted");
+  await proposeFromSignals(ctx);
+  assert.equal((await tuneStatus(ctx)).pending.includes(second.id), false);
+  assert.equal(listProposals(ctx).filter((p) => p.status === "pending").length, 0);
 
   await tuneRevert(ctx, second.skill);
   assert.equal(existsSync(dest), false);
@@ -380,6 +423,66 @@ test("progress missing step_title or status is dropped and progress is not writt
   await ingestProgress(ctx);
   const lines2 = readFileSync(ctx.paths.signalsFile, "utf8").trim().split("\n").filter(Boolean);
   assert.equal(lines2.length, 1);
+});
+
+test("auto_accept true writes override once and later propose does not duplicate", async () => {
+  const dataRoot = tmp("devkit-tn-data-");
+  const repo = makeRepo();
+  const cfg = join(tmp("devkit-tn-cfg-"), "cfg.yaml");
+  writeFileSync(cfg, "tuning:\n  auto_accept: true\n");
+  const ctx = await createContext({
+    repoPath: repo,
+    configFile: cfg,
+    env: isolatedEnv(dataRoot),
+  });
+  assert.equal(ctx.config.tuning.auto_accept, true);
+  await recordSignal(ctx, { kind: "evidence_fail_then_success", fact: SAMPLE_FACT });
+  await recordSignal(ctx, { kind: "evidence_fail_then_success", fact: SAMPLE_FACT });
+  const dest = overrideMdPath(ctx, "using-coredevkit");
+  assert.equal(existsSync(dest), true);
+  const rows = listProposals(ctx);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.status, "accepted");
+  const status = await tuneStatus(ctx);
+  assert.deepEqual(status.pending, []);
+  assert.equal(status.auto_accept, true);
+  await proposeFromSignals(ctx);
+  assert.equal(listProposals(ctx).length, 1);
+  assert.equal(listProposals(ctx)[0]?.status, "accepted");
+  assert.deepEqual((await tuneStatus(ctx)).pending, []);
+});
+
+test("invalid proposal id does not join outside proposalsDir", async () => {
+  const dataRoot = tmp("devkit-tn-data-");
+  const repo = makeRepo();
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  await assert.rejects(
+    () => tuneAccept(ctx, "../../../tmp/x"),
+    (err: unknown) => err instanceof PlatformError && err.code === "usage",
+  );
+  await assert.rejects(
+    () => tuneShow(ctx, "../../../tmp/x"),
+    (err: unknown) => err instanceof PlatformError && err.code === "usage",
+  );
+});
+
+test("CLI tune with a bad subcommand does not write user data", async () => {
+  const dataRoot = tmp("devkit-tn-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot);
+  const cap = captureIo();
+  assert.equal(await runCli(["node", "devkit", "--path", repo, "tune", "nope"], env, cap.io), 1);
+  assert.equal(existsSync(join(dataRoot, "devkit", "playbooks")), false);
+  const cap2 = captureIo();
+  assert.equal(
+    await runCli(
+      ["node", "devkit", "--path", repo, "tune", "accept", "../../../tmp/x"],
+      env,
+      cap2.io,
+    ),
+    1,
+  );
+  assert.equal(existsSync(join(dataRoot, "devkit", "playbooks")), false);
 });
 
 test("CLI tune status show accept reject revert", async () => {

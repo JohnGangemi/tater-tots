@@ -199,9 +199,6 @@ function copySkillToHarness(): string {
   const destDir = join(harness, "skills", "using-coredevkit");
   mkdirSync(destDir, { recursive: true });
   copyFileSync(skillSrc, join(destDir, "SKILL.md"));
-  for (const name of WORKFLOW_SKILLS) {
-    assert.equal(existsSync(join(harness, "skills", name)), false);
-  }
   return harness;
 }
 
@@ -266,23 +263,24 @@ test("T-IN-12 foreign-skill PostToolUse npm test feeds playbook_lookup", async (
   const env = isolatedEnv(dataRoot);
   const harness = copySkillToHarness();
   assert.equal(existsSync(join(harness, "skills", "using-coredevkit", "SKILL.md")), true);
+  const payload = {
+    cwd: main,
+    hook_event_name: "PostToolUse",
+    session_id: "sess-foreign",
+    tool_name: "Bash",
+    tool_input: { command: "npm test" },
+    tool_response: { stdout: "ok", exitCode: 0 },
+    duration_ms: 12,
+    skill_name: FOREIGN_SKILL,
+    loaded_skills: [FOREIGN_SKILL],
+  };
+  assert.deepEqual(payload.loaded_skills, [FOREIGN_SKILL]);
+  assert.equal(payload.skill_name, FOREIGN_SKILL);
+  for (const name of WORKFLOW_SKILLS) {
+    assert.equal(existsSync(join(workspaceRoot, "packages", "platform", "skills", name)), false);
+  }
 
-  const result = await runHook(
-    "post-tool-use",
-    {
-      cwd: main,
-      hook_event_name: "PostToolUse",
-      session_id: "sess-foreign",
-      tool_name: "Bash",
-      tool_input: { command: "npm test" },
-      tool_response: { stdout: "ok", exitCode: 0 },
-      duration_ms: 12,
-      skill_name: FOREIGN_SKILL,
-      loaded_skills: [FOREIGN_SKILL],
-    },
-    env,
-    { path: main },
-  );
+  const result = await runHook("post-tool-use", payload, env, { path: main });
   assert.equal(result.code, 0);
   assert.equal(result.out.trim(), "");
 
@@ -436,9 +434,17 @@ test("using-coredevkit is thin and plugin workflows are absent", () => {
   const lines = body.split("\n");
   assert.ok(lines.length < 80, `SKILL.md has ${lines.length} lines`);
   assert.match(body, /^name: using-coredevkit$/m);
+  assert.match(
+    body,
+    /Triggers:\s*coredevkit,\s*code graph,\s*playbook,\s*evidence_check,\s*adversarial_review,\s*verification gate\./,
+  );
   assert.match(body, /graph_search/);
+  assert.match(body, /graph_symbol/);
+  assert.match(body, /graph_impact/);
   assert.match(body, /playbook_lookup/);
   assert.match(body, /evidence_check/);
+  assert.match(body, /tune_status/);
+  assert.match(body, /tune_accept/);
   assert.doesNotMatch(body, /writing-plans|issue-to-pr|HTML|coordinator|stacked/i);
   assert.equal(existsSync(join(workspaceRoot, "packages", "plugin")), false);
   for (const name of WORKFLOW_SKILLS) {

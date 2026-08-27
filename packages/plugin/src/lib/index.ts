@@ -67,5 +67,15 @@ export { runPlanCommand } from "./plan/command.js";
 export type { RunPacket, SubagentPacket } from "./plan/packet.js";
 export { runImplementCommand } from "./implement/command.js";
 export { evidenceBeforeDone, evidenceGateExit } from "./gates/evidence.js";
+export {
+  shouldRunAdversarial,
+  runAdversarialCheckpoint,
+  acceptAdversarialPatch,
+  newAdversarialSessionId,
+} from "./gates/adversarial.js";
+export {
+  applyEligiblePatches,
+  isEligibleFinding,
+} from "./gates/auto-patch.js";
 export { resolveSubagent } from "./subagents/resolve.js";
 export { buildPacket } from "./subagents/packet.js";

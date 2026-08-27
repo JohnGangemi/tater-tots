@@ -13,9 +13,9 @@ Before the steps, if you can run `devkit skill show implement`, obey any
 # Implement
 
 Call platform tools by logical names: `graph_search`, `graph_symbol`,
-`graph_impact`, `playbook_lookup`, `evidence_check`. If a tool is missing,
-fail this workflow. Do not walk the repository when graph tools respond,
-including zero hits.
+`graph_impact`, `playbook_lookup`, `evidence_check`, `adversarial_review`.
+If a tool is missing, fail this workflow. Do not walk the repository when
+graph tools respond, including zero hits.
 
 Implement reads the coordinator and `plan.md`. It does not read
 `plan.intent.json` for step work.
@@ -30,6 +30,9 @@ Implement reads the coordinator and `plan.md`. It does not read
 3. Run `devkit implement` (add `--step <id>` only to jump to an existing
    id on the current stack item). Use the JSON packet: `resume_step_id`,
    `dispatch.agent`, `allowed_paths`, playbook hints, graph hints.
+   When verification is `full` and a trigger matches, the CLI prefix
+   runs the adversarial checkpoint on packet and on `--mark done`.
+   On `BLOCK`, stop. Do not dispatch coder. Do not `--mark done`.
 4. If `blocking open questions` appear, stop. Do not dispatch. Do not
    `--mark done`. After the user resolves questions in intent, run
    `devkit plan --start-coordinator` without `--replace`, then resume.

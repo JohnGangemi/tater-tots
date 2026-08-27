@@ -2,20 +2,26 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadConfig } from "./lib/config.js";
+import { loadConfig, type IndexMode } from "./lib/config.js";
 import { createContext } from "./lib/context.js";
 import { errorMessage, exitCodeFor, isPlatformError, PlatformError } from "./lib/errors.js";
+import { formatInitStdout, initGraph } from "./lib/graph/init.js";
+import type { HttpsGet } from "./lib/graph/cbm-fetch.js";
 
 export type CliArgs = {
   help: boolean;
   path?: string;
   config?: string;
   verification?: string;
+  mode?: string;
+  waitTimeoutSec?: string;
+  fetchCbm: boolean;
   command?: string;
   rest: string[];
 };
 
 const KNOWN_COMMANDS = new Set(["init", "playbook", "tune", "mcp", "hook"]);
+const INDEX_MODES = new Set<string>(["fast", "moderate", "full"]);
 
 const HELP = `Usage: devkit [options] <command>
 
@@ -26,7 +32,8 @@ Options:
   --verification <level>  off | light | full
 
 Commands:
-  init       Prepare the local graph index
+  init [--mode fast|moderate|full] [--wait-timeout-sec N] [--fetch-cbm]
+             Prepare the local graph index
   playbook   Show the command playbook
   tune       Show or apply skill overrides
   mcp        Run the MCP server
@@ -52,7 +59,7 @@ function takeValue(args: string[], i: number, flag: string): { value: string; ne
 }
 
 export function parseArgv(argv: string[]): CliArgs {
-  const out: CliArgs = { help: false, rest: [] };
+  const out: CliArgs = { help: false, fetchCbm: false, rest: [] };
   const args = argv.slice(2);
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -81,6 +88,22 @@ export function parseArgv(argv: string[]): CliArgs {
       i = next;
       continue;
     }
+    if (a === "--mode" || a.startsWith("--mode=")) {
+      const { value, next } = takeValue(args, i, "--mode");
+      out.mode = value;
+      i = next;
+      continue;
+    }
+    if (a === "--wait-timeout-sec" || a.startsWith("--wait-timeout-sec=")) {
+      const { value, next } = takeValue(args, i, "--wait-timeout-sec");
+      out.waitTimeoutSec = value;
+      i = next;
+      continue;
+    }
+    if (a === "--fetch-cbm") {
+      out.fetchCbm = true;
+      continue;
+    }
     if (a.startsWith("-")) {
       throw new PlatformError("usage", `Unknown flag ${a}`);
     }
@@ -96,7 +119,44 @@ export function parseArgv(argv: string[]): CliArgs {
 export type CliIo = {
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
+  stdin?: NodeJS.ReadableStream;
+  stdinIsTTY?: boolean;
+  httpsGet?: HttpsGet;
 };
+
+function isCliTty(io: CliIo): boolean {
+  if (typeof io.stdinIsTTY === "boolean") {
+    return io.stdinIsTTY;
+  }
+  if (io.stdin && "isTTY" in io.stdin) {
+    return Boolean((io.stdin as NodeJS.ReadStream).isTTY);
+  }
+  if (io.stdout === process.stdout) {
+    return Boolean(process.stdin.isTTY);
+  }
+  return false;
+}
+
+function parseInitMode(raw: string | undefined): IndexMode | undefined {
+  if (raw === undefined || raw === "") {
+    return undefined;
+  }
+  if (!INDEX_MODES.has(raw)) {
+    throw new PlatformError("usage", `Invalid --mode ${raw} (use fast, moderate, or full)`);
+  }
+  return raw as IndexMode;
+}
+
+function parseWaitTimeout(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") {
+    return undefined;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new PlatformError("usage", `Invalid --wait-timeout-sec ${raw}`);
+  }
+  return n;
+}
 
 function writeError(io: CliIo, err: unknown): number {
   if (isPlatformError(err)) {
@@ -151,6 +211,28 @@ export async function runCli(
   }
 
   try {
+    if (args.command === "init") {
+      const mode = parseInitMode(args.mode);
+      const waitTimeoutSec = parseWaitTimeout(args.waitTimeoutSec);
+      const ctx = await createContext({
+        repoPath: args.path,
+        configFile: args.config,
+        verification: args.verification,
+        env,
+      });
+      const result = await initGraph(ctx, {
+        ...(mode ? { mode } : {}),
+        ...(waitTimeoutSec !== undefined ? { waitTimeoutSec } : {}),
+        fetchCbm: args.fetchCbm,
+        stdin: io.stdin ?? process.stdin,
+        stdout: io.stdout,
+        stderr: io.stderr,
+        stdinIsTTY: isCliTty(io),
+        ...(io.httpsGet ? { httpsGet: io.httpsGet } : {}),
+      });
+      io.stdout.write(formatInitStdout(ctx, result));
+      return 0;
+    }
     await createContext({
       repoPath: args.path,
       configFile: args.config,

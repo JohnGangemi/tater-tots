@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test test/unit/*.test.ts",
+    "test": "tsx --test test/unit/*.test.ts test/integration/*.test.ts",
     "format": "prettier --write src test package.json tsconfig.json tsconfig.build.json"
   },
   "dependencies": {

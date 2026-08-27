@@ -1,0 +1,242 @@
+#!/usr/bin/env node
+"use strict";
+
+const { read, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, basename, resolve } = require("node:path");
+const { tmpdir } = require("node:os");
+
+const VERSION = "codebase-memory-mcp 0.10.8";
+
+function envelope(body, isError) {
+  const text = JSON.stringify(body);
+  return `${JSON.stringify({
+    content: [{ type: "text", text }],
+    structuredContent: body,
+    isError: Boolean(isError),
+  })}\n`;
+}
+
+function print(body, isError) {
+  process.stdout.write(envelope(body, isError));
+}
+
+function fail(text) {
+  print({ error: text }, true);
+  process.exit(1);
+}
+
+function statePath() {
+  return (
+    process.env.FAKE_CBM_STATE || `${process.env.CBM_CACHE_DIR || tmpdir()}/fake-cbm-state.json`
+  );
+}
+
+function loadState() {
+  try {
+    return JSON.parse(readFileSync(statePath(), "utf8"));
+  } catch {
+    return { projects: {} };
+  }
+}
+
+function saveState(state) {
+  const file = statePath();
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(state)}\n`);
+}
+
+function parseFlags(args) {
+  const flags = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a || !a.startsWith("--")) {
+      continue;
+    }
+    const key = a.slice(2);
+    const next = args[i + 1];
+    if (next === undefined || next.startsWith("--")) {
+      flags[key] = true;
+    } else {
+      flags[key] = next;
+      i++;
+    }
+  }
+  return flags;
+}
+
+function parseCli(argv) {
+  const args = argv.slice(2);
+  if (args.includes("--version") || args[0] === "-V" || args[0] === "version") {
+    return { version: true };
+  }
+  if (args[0] === "install" || args[0] === "uninstall") {
+    return { forbidden: args[0] };
+  }
+  const cliAt = args.indexOf("cli");
+  if (cliAt === -1) {
+    return { unknown: true };
+  }
+  const rest = args.slice(cliAt + 1).filter((a) => a !== "--json" && a !== "--progress");
+  const tool = rest[0];
+  return { tool, flags: parseFlags(rest.slice(1)) };
+}
+
+function waitStdinClosed() {
+  if (process.stdin.isTTY) {
+    return Promise.resolve();
+  }
+  return new Promise((resolveWait) => {
+    const buf = Buffer.alloc(4096);
+    const step = () => {
+      read(0, buf, 0, buf.length, null, (err, n) => {
+        if (err || !n) {
+          resolveWait();
+          return;
+        }
+        step();
+      });
+    };
+    step();
+  });
+}
+
+function searchBody() {
+  return {
+    groups: [
+      {
+        prefix: "demo.src.http",
+        file: "src/http.ts",
+        rows: [
+          {
+            name: "HandleRequest",
+            label: "Function",
+            lines: "42-80",
+            qn: "demo.src.http.HandleRequest",
+          },
+        ],
+      },
+    ],
+    has_more: false,
+    total: 1,
+  };
+}
+
+function callersBody() {
+  return {
+    callers: {
+      groups: [
+        {
+          prefix: "demo.src.router",
+          file: "src/router.ts",
+          rows: [
+            { name: "Dispatch", label: "Function", lines: "10-12", qn: "demo.src.router.Dispatch" },
+          ],
+        },
+      ],
+    },
+    callees: { groups: [] },
+    truncated: false,
+  };
+}
+
+async function main() {
+  const parsed = parseCli(process.argv);
+  if (parsed.version) {
+    process.stdout.write(`${VERSION}\n`);
+    return;
+  }
+  if (parsed.forbidden) {
+    process.stderr.write("fake-cbm does not run install\n");
+    process.exit(2);
+  }
+  const tool = parsed.tool;
+  const flags = parsed.flags || {};
+  if (tool === "search_graph" || tool === "list_projects") {
+    await waitStdinClosed();
+  }
+  if (process.env.FAKE_CBM_IS_ERROR === "timeout") {
+    print({ error: "timed out after 600s" }, true);
+    process.exit(1);
+  }
+  const state = loadState();
+  state.last_argv = process.argv.slice(2);
+  if (tool === "list_projects") {
+    const all = Object.values(state.projects || {});
+    const offset = Number(flags.offset || 0) || 0;
+    const limit = Number(flags.limit || 100) || 100;
+    const slice = all.slice(offset, offset + limit);
+    saveState(state);
+    print({ projects: slice, has_more: offset + slice.length < all.length, total: all.length });
+    return;
+  }
+  if (tool === "index_repository") {
+    const repoPath = flags["repo-path"];
+    if (!repoPath) {
+      fail("repo-path required");
+      return;
+    }
+    const root = resolve(repoPath);
+    const name = basename(root);
+    const project = {
+      name,
+      root_path: root,
+      nodes: 3,
+      edges: 2,
+      indexed_at: new Date().toISOString(),
+    };
+    state.projects = state.projects || {};
+    state.projects[name] = project;
+    saveState(state);
+    print({ status: "indexed", name, nodes: 3, edges: 2 });
+    return;
+  }
+  if (tool === "index_status") {
+    const name = flags.project;
+    const project = name ? (state.projects || {})[name] : undefined;
+    saveState(state);
+    if (!project) {
+      print({ status: "missing", name: name || "", nodes: 0, edges: 0 });
+      return;
+    }
+    print({
+      status: "indexed",
+      name: project.name,
+      root_path: project.root_path,
+      nodes: project.nodes,
+      edges: project.edges,
+    });
+    return;
+  }
+  if (tool === "search_graph") {
+    saveState(state);
+    print(searchBody());
+    return;
+  }
+  if (tool === "trace_path") {
+    saveState(state);
+    print(callersBody());
+    return;
+  }
+  if (tool === "get_code_snippet") {
+    saveState(state);
+    print({
+      source: "function HandleRequest() {\n  return 1;\n}\n",
+    });
+    return;
+  }
+  if (tool === "detect_changes") {
+    saveState(state);
+    print({
+      changed_files: [],
+      impacted: { groups: [] },
+      truncated: false,
+    });
+    return;
+  }
+  fail(`unknown tool ${tool || ""}`);
+}
+
+main().catch((err) => {
+  process.stderr.write(String(err));
+  process.exit(1);
+});

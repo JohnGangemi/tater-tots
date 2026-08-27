@@ -246,6 +246,9 @@ async function runPostToolUse(ctx: PlatformContext, payload: ClaudeHookInput): P
   if (!payload.command) {
     return;
   }
+  if (payload.interrupted) {
+    return;
+  }
   await playbookRecord(ctx, {
     raw_command: payload.command,
     tool_name: OBSERVE_TOOL,

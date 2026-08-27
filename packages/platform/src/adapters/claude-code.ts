@@ -11,6 +11,7 @@ export type ClaudeHookInput = {
   command: string;
   exitCode: number | null;
   durationMs: number | null;
+  interrupted: boolean;
   stopHookActive: boolean;
   lastAssistantMessage: string;
   transcriptPath: string;
@@ -98,6 +99,23 @@ function commandFrom(raw: Record<string, unknown>): string {
   return firstString(raw, ["command", "cmd", "raw_command"]);
 }
 
+function exitFromError(error: string): number | undefined {
+  const match = error.match(/(?:status code|exit code)\s+(\d+)/i);
+  if (!match || match[1] === undefined) {
+    return undefined;
+  }
+  const n = Number(match[1]);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function isFailureEvent(raw: Record<string, unknown>): boolean {
+  const event = firstString(raw, ["hook_event_name", "hookEventName"]).toLowerCase();
+  if (event === "posttoolusefailure") {
+    return true;
+  }
+  return firstString(raw, ["error"]).length > 0;
+}
+
 function exitFrom(raw: Record<string, unknown>): number | null {
   const resp = toolResponse(raw);
   const n =
@@ -109,7 +127,14 @@ function exitFrom(raw: Record<string, unknown>): number | null {
         asFiniteNumber(resp.exit_code) ??
         asFiniteNumber(resp.exit))
       : undefined);
-  return n === undefined ? null : n;
+  if (n !== undefined) {
+    return n;
+  }
+  if (!isFailureEvent(raw)) {
+    return null;
+  }
+  const fromError = exitFromError(firstString(raw, ["error"]));
+  return fromError !== undefined ? fromError : 1;
 }
 
 function durationFrom(raw: Record<string, unknown>): number | null {
@@ -138,6 +163,7 @@ export function parseClaudeHookInput(raw: unknown): ClaudeHookInput | undefined 
     command: commandFrom(raw),
     exitCode: exitFrom(raw),
     durationMs: durationFrom(raw),
+    interrupted: asBool(raw.is_interrupt) || asBool(raw.isInterrupt),
     stopHookActive: asBool(raw.stop_hook_active) || asBool(raw.stopHookActive),
     lastAssistantMessage: firstString(raw, [
       "last_assistant_message",

@@ -19,7 +19,7 @@ import { SESSION_START_BUDGET_MS } from "../../src/hook.js";
 import { createContext } from "../../src/lib/context.js";
 import { evidenceSpawnCalls } from "../../src/lib/evidence/check.js";
 import { cbmBinaryName } from "../../src/lib/graph/cbm-release.js";
-import { playbookRecord } from "../../src/lib/playbook/store.js";
+import { playbookLookup, playbookRecord } from "../../src/lib/playbook/store.js";
 
 const dirs: string[] = [];
 
@@ -321,6 +321,60 @@ test("T-IN-10 Hook with missing playbook file exits 0", async () => {
   assert.equal(start.code, 0);
   const pointer = additionalContext(start.out);
   assert.ok(pointer.split("\n").length <= 20);
+});
+
+test("PostToolUseFailure Bash npm test stores last_status fail", async () => {
+  const dataRoot = tmp("devkit-hook-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot);
+  const ctx = await createContext({ repoPath: repo, env });
+  const result = await runHook(
+    "post-tool-use",
+    {
+      cwd: repo,
+      hook_event_name: "PostToolUseFailure",
+      session_id: "sess-1",
+      tool_name: "Bash",
+      tool_input: { command: "npm test" },
+      error: "Command exited with non-zero status code 1",
+      duration_ms: 12,
+    },
+    env,
+    { path: repo },
+  );
+  assert.equal(result.code, 0);
+  assert.equal(result.out.trim(), "");
+  const hits = await playbookLookup(ctx, { purpose: "test" });
+  assert.equal(hits.commands.length, 1);
+  assert.equal(hits.commands[0]?.last_status, "fail");
+  assert.equal(hits.commands[0]?.last_exit, 1);
+});
+
+test("PostToolUseFailure is_interrupt true is not recorded", async () => {
+  const dataRoot = tmp("devkit-hook-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot);
+  const ctx = await createContext({ repoPath: repo, env });
+  const result = await runHook(
+    "post-tool-use",
+    {
+      cwd: repo,
+      hook_event_name: "PostToolUseFailure",
+      session_id: "sess-1",
+      tool_name: "Bash",
+      tool_input: { command: "npm test" },
+      error: "Command was interrupted",
+      is_interrupt: true,
+      duration_ms: 4,
+    },
+    env,
+    { path: repo },
+  );
+  assert.equal(result.code, 0);
+  assert.equal(result.out.trim(), "");
+  const hits = await playbookLookup(ctx, { purpose: "test" });
+  assert.equal(hits.commands.length, 0);
+  assert.equal(existsSync(ctx.paths.playbookFile), false);
 });
 
 test("T-IN-11 Stop skip_skills superpowers does not spawn evidence", async () => {

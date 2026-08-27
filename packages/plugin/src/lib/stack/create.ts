@@ -21,6 +21,7 @@ import {
   gitAddPaths,
   gitCheckoutBranch,
   gitCommit,
+  gitCurrentBranch,
   gitFetchOrigin,
   gitIdentity,
   gitOriginHead,
@@ -39,6 +40,7 @@ export type StackPublishIo = {
 export type StackPublishResult = {
   record: CoordinatorRecord;
   hint: string;
+  item: StackPr | null;
 };
 
 function loadStackItems(record: CoordinatorRecord): StackItem[] {
@@ -168,14 +170,59 @@ function itemTitle(
   return raw.split("\n")[0]?.trim() || item.stack_id;
 }
 
+function localCompleteWithoutGh(
+  item: StackPr,
+  hasGh: boolean,
+  remote: boolean,
+): boolean {
+  if (hasGh) {
+    return false;
+  }
+  if (item.phase === "pushed") {
+    return true;
+  }
+  return item.phase === "committed" && !remote;
+}
+
+function nextWorkItem(
+  record: CoordinatorRecord,
+  hasGh: boolean,
+  remote: boolean,
+): StackPr | undefined {
+  return record.stack.prs.find((p) => {
+    if (p.phase === "pr_created") {
+      return false;
+    }
+    if (localCompleteWithoutGh(p, hasGh, remote)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function moreHint(
+  record: CoordinatorRecord,
+  hasGh: boolean,
+  remote: boolean,
+): string {
+  return nextWorkItem(record, hasGh, remote)
+    ? "run devkit stack publish"
+    : "stack complete";
+}
+
+function noteGhMissing(io: StackPublishIo): void {
+  io.stderr.write(`devkit: ${GH_MISSING_MSG}\n`);
+}
+
+function lastPr(record: CoordinatorRecord): StackPr | null {
+  return record.stack.prs[record.stack.prs.length - 1] ?? null;
+}
+
 function resolveDefaultBranch(
   record: CoordinatorRecord,
   git: GitOpts,
   hasGh: boolean,
 ): void {
-  if (record.stack.default_branch) {
-    return;
-  }
   if (hasGh) {
     const fromGh = ghDefaultBranch(git);
     if (fromGh) {
@@ -183,7 +230,14 @@ function resolveDefaultBranch(
       return;
     }
   }
-  record.stack.default_branch = gitOriginHead(git) ?? "main";
+  const fromOrigin = gitOriginHead(git);
+  if (fromOrigin) {
+    record.stack.default_branch = fromOrigin;
+    return;
+  }
+  if (!record.stack.default_branch) {
+    record.stack.default_branch = "main";
+  }
 }
 
 function touch(record: CoordinatorRecord): void {
@@ -200,12 +254,22 @@ export async function publishStack(opts: {
   const git: GitOpts = { cwd: ctx.repoPath, env: ctx.env };
   seedIfEmpty(record);
   const hasGh = ghAvailable(git);
+  const remote = hasOrigin(git);
   resolveDefaultBranch(record, git, hasGh);
 
   const items = loadStackItems(record);
-  const item = currentStackItem(record);
+  let item = currentStackItem(record);
   if (!item) {
-    return { record, hint: "stack complete" };
+    return { record, hint: "stack complete", item: lastPr(record) };
+  }
+
+  if (localCompleteWithoutGh(item, hasGh, remote)) {
+    noteGhMissing(io);
+    const next = nextWorkItem(record, hasGh, remote);
+    if (!next) {
+      return { record, hint: "stack complete", item };
+    }
+    item = next;
   }
 
   const base = () => resolveStackBase(record, item, items);
@@ -226,7 +290,7 @@ export async function publishStack(opts: {
     record.resume_step_id = firstItemStep(record, item);
     touch(record);
     await write(record);
-    return { record, hint: "run devkit implement" };
+    return { record, hint: "run devkit implement", item };
   }
 
   if (item.phase === "checked_out") {
@@ -243,6 +307,13 @@ export async function publishStack(opts: {
         `stack item ${item.stack_id} has no allowed_paths`,
       );
     }
+    const head = gitCurrentBranch(git);
+    if (head !== item.branch) {
+      throw new PluginError(
+        "usage",
+        `worktree is not on stack branch ${item.branch}`,
+      );
+    }
     const identity = gitIdentity(git);
     gitAddPaths(paths, git);
     item.commit_sha = gitCommit(itemTitle(record, item, items), identity, git);
@@ -252,7 +323,7 @@ export async function publishStack(opts: {
   }
 
   if (item.phase === "committed") {
-    if (hasOrigin(git)) {
+    if (remote) {
       gitPushBranch(item.branch, git);
       item.phase = "pushed";
       touch(record);
@@ -262,8 +333,8 @@ export async function publishStack(opts: {
 
   if (item.phase === "pushed") {
     if (!hasGh) {
-      io.stderr.write(`devkit: ${GH_MISSING_MSG}\n`);
-      return { record, hint: GH_MISSING_MSG };
+      noteGhMissing(io);
+      return { record, hint: moreHint(record, hasGh, remote), item };
     }
     const created = ghCreatePr(
       {
@@ -275,8 +346,8 @@ export async function publishStack(opts: {
       git,
     );
     if (created.missing) {
-      io.stderr.write(`devkit: ${GH_MISSING_MSG}\n`);
-      return { record, hint: GH_MISSING_MSG };
+      noteGhMissing(io);
+      return { record, hint: moreHint(record, hasGh, remote), item };
     }
     item.pr_url = created.pr.url;
     item.pr_number = created.pr.number;
@@ -289,16 +360,16 @@ export async function publishStack(opts: {
       repo_id: ctx.repoId,
       result: "created",
     });
-    const more = currentStackItem(record);
     return {
       record,
-      hint: more ? "run devkit stack publish" : "stack complete",
+      hint: moreHint(record, hasGh, remote),
+      item,
     };
   }
 
   if (!hasGh) {
-    io.stderr.write(`devkit: ${GH_MISSING_MSG}\n`);
-    return { record, hint: GH_MISSING_MSG };
+    noteGhMissing(io);
+    return { record, hint: moreHint(record, hasGh, remote), item };
   }
-  return { record, hint: "run devkit stack publish" };
+  return { record, hint: "run devkit stack publish", item };
 }

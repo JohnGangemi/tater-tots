@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PlatformContext } from "@coredevkit/platform";
-import { currentStackItem } from "../coordinator/resume.js";
 import { withProgressLock } from "../coordinator/store.js";
 import { PluginError } from "../errors.js";
 import { graphStateFromMapping } from "../plan/graph-state.js";
@@ -70,8 +69,7 @@ export async function runStackCommand(
       });
       const record = out.record;
       const wt = worktreeHash(ctx.repoPath);
-      const item = currentStackItem(record);
-      const last = record.stack.prs[record.stack.prs.length - 1];
+      const item = out.item;
       const packet: RunPacket = {
         command: "stack",
         repo_id: ctx.repoId,
@@ -82,8 +80,8 @@ export async function runStackCommand(
         html_path: record.html_path,
         agent_plan: record.agent_plan,
         resume_step_id: record.resume_step_id,
-        stack_phase: item?.phase ?? last?.phase ?? null,
-        stack_branch: item?.branch ?? last?.branch ?? null,
+        stack_phase: item?.phase ?? null,
+        stack_branch: item?.branch ?? null,
         adversarial_status: record.adversarial.status,
         dispatch: null,
         packet: null,

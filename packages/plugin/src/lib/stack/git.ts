@@ -80,12 +80,25 @@ export function gitFetchOrigin(opts: GitOpts): void {
   gitOk(["fetch", "origin"], { ...opts, timeoutMs: GIT_LONG_MS });
 }
 
+export function gitRemoteBaseExists(base: string, opts: GitOpts): boolean {
+  const r = runGit(
+    ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${base}`],
+    opts,
+  );
+  return r.status === 0;
+}
+
+export function gitCurrentBranch(opts: GitOpts): string {
+  return gitOk(["rev-parse", "--abbrev-ref", "HEAD"], opts).stdout.trim();
+}
+
 export function gitCheckoutBranch(
   base: string,
   branch: string,
   opts: GitOpts,
 ): void {
-  gitOk(["checkout", base], opts);
+  const start = gitRemoteBaseExists(base, opts) ? `origin/${base}` : base;
+  gitOk(["checkout", start], opts);
   gitOk(["checkout", "-B", branch], opts);
 }
 
@@ -134,13 +147,23 @@ export function gitIdentity(opts: GitOpts): { name: string; email: string } {
   return { name: name.trim(), email: email.trim() };
 }
 
+export const ORIGIN_HEAD_PREFIX = "refs/remotes/origin/";
+
+export function originHeadName(symbolicRef: string): string | null {
+  const t = symbolicRef.trim();
+  if (!t) {
+    return null;
+  }
+  if (t.startsWith(ORIGIN_HEAD_PREFIX)) {
+    return t.slice(ORIGIN_HEAD_PREFIX.length) || null;
+  }
+  return t;
+}
+
 export function gitOriginHead(opts: GitOpts): string | null {
   const r = runGit(["symbolic-ref", "refs/remotes/origin/HEAD"], opts);
   if (r.status !== 0) {
     return null;
   }
-  const t = r.stdout.trim();
-  const i = t.lastIndexOf("/");
-  const name = i >= 0 ? t.slice(i + 1) : t;
-  return name || null;
+  return originHeadName(r.stdout);
 }

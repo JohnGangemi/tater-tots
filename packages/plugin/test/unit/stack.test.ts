@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -25,6 +26,7 @@ import type {
   StackPr,
 } from "../../src/lib/coordinator/types.js";
 import { resolveStackBase } from "../../src/lib/stack/create.js";
+import { originHeadName } from "../../src/lib/stack/git.js";
 import type { StackItem } from "../../src/lib/plan/intent.js";
 import { planFilePaths } from "../../src/lib/plan/paths.js";
 import { worktreeHash } from "../../src/lib/worktree.js";
@@ -87,12 +89,17 @@ function makeRepo(identity = true): string {
   return dir;
 }
 
-function addOrigin(repo: string): string {
+function addOrigin(repo: string, branch = "main"): string {
   const remote = tmp("devkit-st-remote-");
   git(remote, ["init", "--bare"]);
   git(repo, ["remote", "add", "origin", remote]);
-  git(repo, ["push", "-u", "origin", "main"]);
+  git(repo, ["push", "-u", "origin", branch]);
+  git(repo, ["remote", "set-head", "origin", branch]);
   return remote;
+}
+
+function ghMissingCount(err: string): number {
+  return (err.match(/PR not opened because gh is missing/g) ?? []).length;
 }
 
 function makeGitBin(): string {
@@ -294,6 +301,14 @@ test("devkit stack without publish is usage", async () => {
   assert.match(cap.err(), /usage: devkit stack publish/);
 });
 
+test("originHeadName keeps slash in the default branch", () => {
+  assert.equal(
+    originHeadName("refs/remotes/origin/release/1.0"),
+    "release/1.0",
+  );
+  assert.equal(originHeadName("refs/remotes/origin/main"), "main");
+});
+
 test("resolveStackBase: depends_on wins over base", () => {
   const items: StackItem[] = [
     {
@@ -353,6 +368,7 @@ test("T-ST-02 missing git identity exits 1", async () => {
   const env = isolatedEnv(tmp("devkit-data-"), makeGitBin());
   const repo = makeRepo(false);
   const ctx = await startStacked(repo, env);
+  git(repo, ["checkout", "-B", "feat/a"]);
   const rec = await loadCoordinator(ctx);
   const a = rec.stack.prs[0];
   assert.ok(a);
@@ -544,10 +560,173 @@ test("T-ST-08 gh missing after pushed exits 0 and skips pr create", async () => 
     cap.io,
   );
   assert.equal(code, 0, cap.err());
-  assert.match(cap.err(), /PR not opened because gh is missing/);
+  assert.equal(ghMissingCount(cap.err()), 1);
   const after = await loadCoordinator(ctx);
   assert.equal(after.stack.prs[0]?.phase, "pushed");
   assert.equal(after.stack.prs[0]?.pr_state, "none");
   git(repo, ["rev-parse", "--verify", "feat/a"]);
+  assert.equal(after.stack.prs[1]?.phase, "checked_out");
+  const packet = JSON.parse(cap.out()) as {
+    stack_phase?: string;
+    stack_branch?: string;
+    hint?: string;
+  };
+  assert.equal(packet.stack_phase, "checked_out");
+  assert.equal(packet.stack_branch, "feat/b");
+  assert.notEqual(packet.hint, "PR not opened because gh is missing.");
+});
+
+test("commit path refuses when HEAD is not the stack branch", async () => {
+  const env = isolatedEnv(tmp("devkit-data-"), makeGitBin());
+  const repo = makeRepo();
+  const ctx = await startStacked(repo, env);
+  const first = captureIo();
+  assert.equal(
+    await runPluginCli(
+      ["node", "devkit", "--path", repo, "stack", "publish"],
+      env,
+      first.io,
+    ),
+    0,
+    first.err(),
+  );
+  git(repo, ["checkout", "main"]);
+  const sha = git(repo, ["rev-parse", "HEAD"]);
+  writeFileSync(join(repo, "a.txt"), "a\n");
+  const rec = await loadCoordinator(ctx);
+  rec.steps[0]!.status = "done";
+  await saveCoordinator(ctx, rec);
+  const cap = captureIo();
+  const code = await runPluginCli(
+    ["node", "devkit", "--path", repo, "stack", "publish"],
+    env,
+    cap.io,
+  );
+  assert.equal(code, 1, cap.err());
+  assert.match(cap.err(), /worktree is not on stack branch feat\/a/);
+  assert.equal(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]), "main");
+  assert.equal(git(repo, ["rev-parse", "HEAD"]), sha);
+});
+
+test("default branch comes from origin HEAD not stored main", async () => {
+  const env = isolatedEnv(tmp("devkit-data-"), makeGitBin());
+  const repo = makeRepo();
+  git(repo, ["branch", "-m", "main", "develop"]);
+  addOrigin(repo, "develop");
+  const ctx = await startStacked(repo, env);
+  const before = await loadCoordinator(ctx);
+  assert.equal(before.stack.default_branch, "main");
+  const cap = captureIo();
+  const code = await runPluginCli(
+    ["node", "devkit", "--path", repo, "stack", "publish"],
+    env,
+    cap.io,
+  );
+  assert.equal(code, 0, cap.err());
+  const after = await loadCoordinator(ctx);
+  assert.equal(after.stack.default_branch, "develop");
+  assert.equal(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]), "feat/a");
+});
+
+test("checkout uses origin/base when that ref exists", async () => {
+  const env = isolatedEnv(tmp("devkit-data-"), makeGitBin());
+  const repo = makeRepo();
+  const origin = addOrigin(repo);
+  const other = tmp("devkit-st-ahead-");
+  git(other, ["clone", origin, "."]);
+  git(other, ["config", "user.name", "t"]);
+  git(other, ["config", "user.email", "t@t"]);
+  writeFileSync(join(other, "from-origin.txt"), "ahead\n");
+  git(other, ["add", "--", "from-origin.txt"]);
+  git(other, [
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-m",
+    "ahead",
+  ]);
+  git(other, ["push", "origin", "main"]);
+  await startStacked(repo, env);
+  const cap = captureIo();
+  const code = await runPluginCli(
+    ["node", "devkit", "--path", repo, "stack", "publish"],
+    env,
+    cap.io,
+  );
+  assert.equal(code, 0, cap.err());
+  assert.equal(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]), "feat/a");
+  assert.equal(readFileSync(join(repo, "from-origin.txt"), "utf8"), "ahead\n");
+});
+
+test("gh missing after this publish does not check out the next item", async () => {
+  const env = isolatedEnv(tmp("devkit-data-"), makeGitBin());
+  const repo = makeRepo();
+  addOrigin(repo);
+  const ctx = await startStacked(repo, env);
+  const first = captureIo();
+  assert.equal(
+    await runPluginCli(
+      ["node", "devkit", "--path", repo, "stack", "publish"],
+      env,
+      first.io,
+    ),
+    0,
+    first.err(),
+  );
+  writeFileSync(join(repo, "a.txt"), "a\n");
+  const mark = captureIo();
+  assert.equal(
+    await runPluginCli(
+      [
+        "node",
+        "devkit",
+        "--path",
+        repo,
+        "--verification",
+        "off",
+        "implement",
+        "--mark",
+        "done",
+      ],
+      env,
+      mark.io,
+    ),
+    0,
+    mark.err(),
+  );
+  const cap = captureIo();
+  const code = await runPluginCli(
+    ["node", "devkit", "--path", repo, "stack", "publish"],
+    env,
+    cap.io,
+  );
+  assert.equal(code, 0, cap.err());
+  assert.equal(ghMissingCount(cap.err()), 1);
+  const packet = JSON.parse(cap.out()) as {
+    stack_phase?: string;
+    stack_branch?: string;
+  };
+  assert.equal(packet.stack_phase, "pushed");
+  assert.equal(packet.stack_branch, "feat/a");
+  assert.equal(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]), "feat/a");
+  const rec = await loadCoordinator(ctx);
+  assert.equal(rec.stack.prs[0]?.phase, "pushed");
+  assert.equal(rec.stack.prs[1]?.phase, "none");
+
+  const next = captureIo();
+  assert.equal(
+    await runPluginCli(
+      ["node", "devkit", "--path", repo, "stack", "publish"],
+      env,
+      next.io,
+    ),
+    0,
+    next.err(),
+  );
+  const after = await loadCoordinator(ctx);
+  assert.equal(after.stack.prs[1]?.phase, "checked_out");
+  assert.equal(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]), "feat/b");
 });
 

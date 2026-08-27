@@ -350,6 +350,8 @@ test("T-IN-P-07 two implement/publish cycles; second PR base is A branch", async
 
   const p2 = await publish(repo, env);
   assert.equal(p2.code, 0, p2.err);
+  assert.equal(p2.packet.stack_phase, "pr_created");
+  assert.equal(p2.packet.stack_branch, "feat/a");
   const recA = await loadCoordinator(ctx);
   assert.equal(recA.stack.prs[0]?.phase, "pr_created");
   assert.equal(recA.stack.prs[0]?.pr_state, "created");
@@ -374,6 +376,8 @@ test("T-IN-P-07 two implement/publish cycles; second PR base is A branch", async
 
   const p4 = await publish(repo, env);
   assert.equal(p4.code, 0, p4.err);
+  assert.equal(p4.packet.stack_phase, "pr_created");
+  assert.equal(p4.packet.stack_branch, "feat/b");
   const recB = await loadCoordinator(ctx);
   assert.equal(recB.stack.prs[0]?.phase, "pr_created");
   assert.equal(recB.stack.prs[1]?.phase, "pr_created");

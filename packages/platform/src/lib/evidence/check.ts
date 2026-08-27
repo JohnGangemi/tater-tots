@@ -16,6 +16,7 @@ export type EvidenceInput = {
   force?: boolean;
   cwd?: string;
   timeout_ms?: number;
+  retries?: number;
 };
 
 export type EvidenceVerdict = "pass" | "fail" | "no_command" | "denied" | "error" | "skipped";
@@ -30,6 +31,7 @@ export type EvidenceResult = {
   tail: string;
   recorded: "stored" | "excluded" | "redacted" | "skipped";
   resolved_level: "off" | "light" | "full";
+  timed_out: boolean;
 };
 
 export type EvidenceSpawnCall = {
@@ -88,6 +90,7 @@ function emptyResult(
     tail: "",
     recorded: "skipped",
     resolved_level: level,
+    timed_out: false,
     ...extra,
   };
 }
@@ -503,7 +506,9 @@ export async function evidenceCheck(
   const timeoutMs = input.timeout_ms ?? ctx.config.platform.evidence.timeout_ms;
   const tailLines = ctx.config.platform.evidence.tail_lines;
   const tailBytes = ctx.config.platform.evidence.tail_bytes;
-  const maxAttempts = Math.max(1, ctx.config.verification.evidence_retries + 1);
+  const retryCount =
+    input.retries !== undefined ? input.retries : ctx.config.verification.evidence_retries;
+  const maxAttempts = Math.max(1, retryCount + 1);
   const args = argv.slice(1);
 
   let attempts = 0;
@@ -511,6 +516,7 @@ export async function evidenceCheck(
   let lastTail = "";
   let verdict: EvidenceVerdict = "fail";
   let spawnFailed = false;
+  let timedOut = false;
 
   for (let i = 0; i < maxAttempts; i++) {
     const wrapped = wrapSpawn(file, args, childEnv);
@@ -538,8 +544,10 @@ export async function evidenceCheck(
     if (run.timedOut) {
       lastStatus = null;
       verdict = "fail";
+      timedOut = true;
       continue;
     }
+    timedOut = false;
     lastStatus = run.status;
     if (run.status === 0) {
       verdict = "pass";
@@ -571,6 +579,7 @@ export async function evidenceCheck(
     tail: lastTail,
     recorded,
     resolved_level: level,
+    timed_out: timedOut,
   };
   logPlatform(ctx.env, {
     component: "evidence",

@@ -15,6 +15,7 @@ import { writeFileAtomicSync } from "./lib/fs-atomic.js";
 import { cbmCli } from "./lib/graph/cbm-client.js";
 import { readCbmMapping } from "./lib/graph/init.js";
 import { isClaimedCompletion } from "./lib/hooks/claimed-completion.js";
+import { skillNamesFromTranscript } from "./lib/hooks/transcript.js";
 import { logPlatform } from "./lib/log.js";
 import type { EnvMap } from "./lib/paths.js";
 import { redactText } from "./lib/redact.js";
@@ -120,65 +121,75 @@ function buildPointer(
   );
 }
 
-async function raceTimeout<T>(ms: number, fallback: T, fn: () => Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      fn(),
-      new Promise<T>((resolve) => {
-        timer = setTimeout(() => resolve(fallback), ms);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
+function onAbort<T>(signal: AbortSignal, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve(fallback);
+      return;
     }
+    signal.addEventListener("abort", () => resolve(fallback), { once: true });
+  });
+}
+
+async function sessionGraphState(
+  ctx: PlatformContext,
+  budgetMs: number,
+  signal: AbortSignal,
+): Promise<string> {
+  try {
+    await cbmCli(
+      ctx,
+      "list_projects",
+      { "include-details": true, limit: 1, offset: 0 },
+      { timeoutMs: budgetMs, signal },
+    );
+    if (signal.aborted) {
+      return "unknown";
+    }
+    const mapping = readCbmMapping(ctx.paths.cbmProjectFile);
+    if (!mapping) {
+      return "missing";
+    }
+    return mapping.last_status === "degraded" ? "degraded" : "ready";
+  } catch (err) {
+    if (signal.aborted || (isPlatformError(err) && err.code === "graph_timeout")) {
+      return "unknown";
+    }
+    return "missing";
   }
 }
 
-async function sessionGraphState(ctx: PlatformContext, budgetMs: number): Promise<string> {
-  return raceTimeout(budgetMs, "unknown", async () => {
-    try {
-      await cbmCli(
-        ctx,
-        "list_projects",
-        { "include-details": true, limit: 1, offset: 0 },
-        { timeoutMs: budgetMs },
-      );
-      const mapping = readCbmMapping(ctx.paths.cbmProjectFile);
-      if (!mapping) {
-        return "missing";
-      }
-      return mapping.last_status === "degraded" ? "degraded" : "ready";
-    } catch (err) {
-      if (isPlatformError(err) && err.code === "graph_timeout") {
-        return "unknown";
-      }
-      const mapping = readCbmMapping(ctx.paths.cbmProjectFile);
-      if (mapping) {
-        return mapping.last_status === "degraded" ? "degraded" : "ready";
-      }
-      return "missing";
+async function sessionPlaybookEntries(ctx: PlatformContext, signal: AbortSignal): Promise<string> {
+  try {
+    const stats = await Promise.race([
+      playbookStats(ctx),
+      onAbort(signal, undefined).then(() => undefined),
+    ]);
+    if (stats === undefined || signal.aborted) {
+      return "?";
     }
-  });
+    return String(stats.entries);
+  } catch {
+    return "0";
+  }
 }
 
-async function sessionPlaybookEntries(ctx: PlatformContext, budgetMs: number): Promise<string> {
-  return raceTimeout(budgetMs, "?", async () => {
-    try {
-      const stats = await playbookStats(ctx);
-      return String(stats.entries);
-    } catch {
-      return "0";
-    }
-  });
+function uniqueNames(names: string[]): string[] {
+  return [...new Set(names.filter((n) => n.length > 0))];
+}
+
+function payloadSkills(payload: ClaudeHookInput): string[] {
+  const fromTranscript = payload.transcriptPath
+    ? skillNamesFromTranscript(payload.transcriptPath)
+    : [];
+  return uniqueNames([...payload.skills, ...fromTranscript]);
 }
 
 function writeSessionPointer(ctx: PlatformContext, payload: ClaudeHookInput): void {
   const pointer: SessionPointer = {
     session_id: payload.sessionId,
     repo_id: ctx.repoId,
-    skills: payload.skills,
+    skills: payloadSkills(payload),
   };
   writeFileAtomicSync(ctx.paths.sessionPointerFile, `${JSON.stringify(pointer)}\n`);
 }
@@ -211,9 +222,10 @@ async function runSessionStart(
   payload: ClaudeHookInput,
   io: HookIo,
 ): Promise<void> {
+  const signal = AbortSignal.timeout(SESSION_START_BUDGET_MS);
   const [graph, playbook] = await Promise.all([
-    sessionGraphState(ctx, SESSION_START_BUDGET_MS),
-    sessionPlaybookEntries(ctx, SESSION_START_BUDGET_MS),
+    sessionGraphState(ctx, SESSION_START_BUDGET_MS, signal),
+    sessionPlaybookEntries(ctx, signal),
   ]);
   const pointer = buildPointer(graph, ctx.repoId, playbook, ctx.config.resolved_level);
   try {
@@ -244,8 +256,19 @@ async function runPostToolUse(ctx: PlatformContext, payload: ClaudeHookInput): P
   });
 }
 
-function skillNames(payload: ClaudeHookInput, pointer: SessionPointer | undefined): string[] {
-  return [...new Set([...payload.skills, ...(pointer?.skills ?? [])])];
+function pointerSkillsForStop(ctx: PlatformContext, payload: ClaudeHookInput): string[] {
+  const pointer = readSessionPointer(ctx);
+  if (!pointer) {
+    return [];
+  }
+  if (pointer.session_id !== payload.sessionId || pointer.repo_id !== ctx.repoId) {
+    return [];
+  }
+  return pointer.skills;
+}
+
+function skillNames(ctx: PlatformContext, payload: ClaudeHookInput): string[] {
+  return uniqueNames([...payloadSkills(payload), ...pointerSkillsForStop(ctx, payload)]);
 }
 
 function isSkippedSkill(ctx: PlatformContext, names: string[]): boolean {
@@ -258,13 +281,23 @@ function isSkippedSkill(ctx: PlatformContext, names: string[]): boolean {
 }
 
 async function runStopEvidence(ctx: PlatformContext, io: HookIo): Promise<void> {
+  const started = Date.now();
   for (const purpose of STOP_PURPOSES) {
+    const left = STOP_EVIDENCE_TIMEOUT_MS - (Date.now() - started);
+    if (left <= 0) {
+      return;
+    }
+    const timeoutMs = Math.min(left, ctx.config.platform.evidence.timeout_ms);
     const result = await evidenceCheck(ctx, {
       purpose,
-      timeout_ms: STOP_EVIDENCE_TIMEOUT_MS,
+      timeout_ms: timeoutMs,
+      retries: 0,
     });
     if (result.verdict === "no_command" || result.verdict === "skipped") {
       continue;
+    }
+    if (result.timed_out || result.verdict === "error") {
+      return;
     }
     if (!result.ok) {
       const shown = result.command ? redactText(result.command) : "<redacted>";
@@ -286,7 +319,7 @@ async function runStop(ctx: PlatformContext, payload: ClaudeHookInput, io: HookI
   if (!ctx.config.platform.evidence_on_stop || ctx.config.resolved_level === "off") {
     return;
   }
-  if (isSkippedSkill(ctx, skillNames(payload, readSessionPointer(ctx)))) {
+  if (isSkippedSkill(ctx, skillNames(ctx, payload))) {
     return;
   }
   if (!ctx.config.platform.stop_blocking) {

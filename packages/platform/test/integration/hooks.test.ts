@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, delimiter, join } from "node:path";
 import { Readable } from "node:stream";
@@ -92,6 +100,16 @@ function captureIo(stdin: string): { io: CliIo; out: () => string; err: () => st
   };
 }
 
+async function runHookRaw(
+  argv: string[],
+  stdin: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ code: number; out: string; err: string }> {
+  const cap = captureIo(stdin);
+  const code = await runCli(argv, env, cap.io);
+  return { code, out: cap.out(), err: cap.err() };
+}
+
 async function runHook(
   kind: string,
   payload: Record<string, unknown>,
@@ -103,17 +121,19 @@ async function runHook(
     argv.push("--config", extra.config);
   }
   argv.push("hook", kind);
-  const cap = captureIo(JSON.stringify(payload));
-  const code = await runCli(argv, env, cap.io);
-  return { code, out: cap.out(), err: cap.err() };
+  return runHookRaw(argv, JSON.stringify(payload), env);
 }
 
-function sessionStartPayload(cwd: string): Record<string, unknown> {
+function sessionStartPayload(
+  cwd: string,
+  extra: { transcriptPath?: string; sessionId?: string } = {},
+): Record<string, unknown> {
   return {
     cwd,
     hook_event_name: "SessionStart",
-    session_id: "sess-1",
-    source: "startup",
+    session_id: extra.sessionId ?? "sess-1",
+    source: extra.transcriptPath ? "resume" : "startup",
+    ...(extra.transcriptPath ? { transcript_path: extra.transcriptPath } : {}),
   };
 }
 
@@ -134,16 +154,66 @@ function postToolPayload(
 
 function stopPayload(
   cwd: string,
-  extra: { text?: string; skill?: string; stopHookActive?: boolean } = {},
+  extra: {
+    text?: string;
+    skill?: string;
+    stopHookActive?: boolean;
+    transcriptPath?: string;
+    omitText?: boolean;
+    sessionId?: string;
+  } = {},
 ): Record<string, unknown> {
   return {
     cwd,
     hook_event_name: "Stop",
-    session_id: "sess-1",
-    last_assistant_message: extra.text ?? "still writing tests",
+    session_id: extra.sessionId ?? "sess-1",
+    ...(extra.omitText ? {} : { last_assistant_message: extra.text ?? "still writing tests" }),
+    ...(extra.transcriptPath ? { transcript_path: extra.transcriptPath } : {}),
     ...(extra.skill ? { skill_name: extra.skill, loaded_skills: [extra.skill] } : {}),
     ...(extra.stopHookActive ? { stop_hook_active: true } : {}),
   };
+}
+
+function writeTranscript(path: string, rows: unknown[]): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+}
+
+function skillTranscriptRow(skill: string): unknown {
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "tool_use", name: "Skill", input: { skill } }],
+    },
+  };
+}
+
+function assistantTextRow(text: string): unknown {
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+    },
+  };
+}
+
+function writeBlockingConfig(extra: string[] = []): string {
+  const config = join(tmp("devkit-hook-cfg-"), "config.yaml");
+  writeFileSync(
+    config,
+    [
+      "platform:",
+      "  stop_blocking: true",
+      "  evidence_on_stop: true",
+      ...extra,
+      "verification:",
+      "  level: light",
+      "",
+    ].join("\n"),
+  );
+  return config;
 }
 
 function parseJson(out: string): Record<string, unknown> {
@@ -167,11 +237,11 @@ function writeSlowCbm(dir: string, delayMs: number): string {
   const name = cbmBinaryName();
   const path = join(dir, name);
   const body = `#!/usr/bin/env node
-if (process.argv.includes("--version") || process.argv[2] === "-V") {
-  process.stdout.write("codebase-memory-mcp 0.10.8\\n");
-  process.exit(0);
-}
-setTimeout(() => {}, ${delayMs});
+setTimeout(() => {
+  if (process.argv.includes("--version") || process.argv[2] === "-V") {
+    process.stdout.write("codebase-memory-mcp 0.10.8\\n");
+  }
+}, ${delayMs});
 `;
   writeFileSync(path, body);
   chmodSync(path, 0o755);
@@ -184,6 +254,18 @@ const fs = require("node:fs");
 fs.writeFileSync(${JSON.stringify(mark)}, "spawned");
 process.exit(1);
 `;
+  if (process.platform === "win32") {
+    const script = join(dir, "npm.js");
+    writeFileSync(script, js);
+    writeFileSync(join(dir, "npm.cmd"), `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+    return;
+  }
+  writeFileSync(join(dir, "npm"), `#!${process.execPath}\n${js}\n`);
+  chmodSync(join(dir, "npm"), 0o755);
+}
+
+function writeHungNpm(dir: string): void {
+  const js = `setTimeout(() => {}, 30000);\n`;
   if (process.platform === "win32") {
     const script = join(dir, "npm.js");
     writeFileSync(script, js);
@@ -272,9 +354,14 @@ test("T-IN-11 Stop skip_skills superpowers does not spawn evidence", async () =>
     ].join("\n"),
   );
   evidenceSpawnCalls.length = 0;
+  const transcript = join(tmp("devkit-hook-tr-"), "transcript.jsonl");
+  writeTranscript(transcript, [
+    skillTranscriptRow("superpowers"),
+    assistantTextRow("tests passed"),
+  ]);
   const result = await runHook(
     "stop",
-    stopPayload(repo, { text: "tests passed", skill: "superpowers" }),
+    stopPayload(repo, { text: "tests passed", transcriptPath: transcript }),
     env,
     { path: repo, config },
   );
@@ -370,4 +457,208 @@ test("T-IN-16 Stop claimed-completion with stop_blocking false does not block", 
       assert.equal("additionalContext" in spec, false);
     }
   }
+});
+
+test("Stop stop_hook_active true with claimed text does not spawn", async () => {
+  const dataRoot = tmp("devkit-hook-data-");
+  const repo = makeRepo();
+  const binDir = tmp("devkit-hook-bin-");
+  const mark = join(tmp("devkit-hook-mark-"), "mark.txt");
+  writeFailingNpm(binDir, mark);
+  const env = isolatedEnv(dataRoot, { pathPrefix: [binDir] });
+  const ctx = await createContext({ repoPath: repo, env });
+  await playbookRecord(ctx, {
+    raw_command: "npm test",
+    tool_name: "Bash",
+    cwd: repo,
+    exit_code: 0,
+    duration_ms: 12,
+  });
+  const config = writeBlockingConfig();
+  evidenceSpawnCalls.length = 0;
+  const result = await runHook(
+    "stop",
+    stopPayload(repo, { text: "that's all", stopHookActive: true }),
+    env,
+    { path: repo, config },
+  );
+  assert.equal(result.code, 0);
+  assert.equal(result.out, "");
+  assert.equal(evidenceSpawnCalls.length, 0);
+  assert.equal(existsSync(mark), false);
+});
+
+test("Stop claimed-completion from transcript_path JSONL only", async () => {
+  const dataRoot = tmp("devkit-hook-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot);
+  const transcript = join(tmp("devkit-hook-tr-"), "transcript.jsonl");
+  writeTranscript(transcript, [assistantTextRow("that's all")]);
+  const result = await runHook(
+    "stop",
+    stopPayload(repo, { omitText: true, transcriptPath: transcript }),
+    env,
+    { path: repo },
+  );
+  assert.equal(result.code, 0);
+  assert.equal(result.out.includes("additionalContext"), false);
+  assert.equal(result.out.includes('"decision"'), false);
+  assert.ok(result.out.trim().length > 0);
+});
+
+test("Stop skip_skills from session pointer only", async () => {
+  const dataRoot = tmp("devkit-hook-data-");
+  const repo = makeRepo();
+  const binDir = tmp("devkit-hook-bin-");
+  const mark = join(tmp("devkit-hook-mark-"), "mark.txt");
+  writeFailingNpm(binDir, mark);
+  const env = isolatedEnv(dataRoot, { pathPrefix: [binDir] });
+  const ctx = await createContext({ repoPath: repo, env });
+  await playbookRecord(ctx, {
+    raw_command: "npm test",
+    tool_name: "Bash",
+    cwd: repo,
+    exit_code: 0,
+    duration_ms: 12,
+  });
+  const transcript = join(tmp("devkit-hook-tr-"), "transcript.jsonl");
+  writeTranscript(transcript, [skillTranscriptRow("superpowers")]);
+  const start = await runHook(
+    "session-start",
+    sessionStartPayload(repo, { transcriptPath: transcript }),
+    env,
+    { path: repo },
+  );
+  assert.equal(start.code, 0);
+  const pointer = JSON.parse(readFileSync(ctx.paths.sessionPointerFile, "utf8")) as {
+    skills?: string[];
+  };
+  assert.ok(pointer.skills?.includes("superpowers"));
+  const config = writeBlockingConfig(["  skip_skills:", "    - superpowers"]);
+  evidenceSpawnCalls.length = 0;
+  const result = await runHook("stop", stopPayload(repo, { text: "that's all" }), env, {
+    path: repo,
+    config,
+  });
+  assert.equal(result.code, 0);
+  assert.equal(evidenceSpawnCalls.length, 0);
+  assert.equal(existsSync(mark), false);
+  assert.equal(result.out.includes('"decision"'), false);
+});
+
+test("Stop stop_blocking true plus failing evidence emits decision block", async () => {
+  const dataRoot = tmp("devkit-hook-data-");
+  const repo = makeRepo();
+  const binDir = tmp("devkit-hook-bin-");
+  const mark = join(tmp("devkit-hook-mark-"), "mark.txt");
+  writeFailingNpm(binDir, mark);
+  const env = isolatedEnv(dataRoot, { pathPrefix: [binDir] });
+  const ctx = await createContext({ repoPath: repo, env });
+  await playbookRecord(ctx, {
+    raw_command: "npm test",
+    tool_name: "Bash",
+    cwd: repo,
+    exit_code: 0,
+    duration_ms: 12,
+  });
+  const config = writeBlockingConfig();
+  evidenceSpawnCalls.length = 0;
+  const result = await runHook("stop", stopPayload(repo, { text: "that's all" }), env, {
+    path: repo,
+    config,
+  });
+  assert.equal(result.code, 0);
+  assert.equal(existsSync(mark), true);
+  const parsed = parseJson(result.out);
+  assert.equal(parsed.decision, "block");
+  assert.equal("additionalContext" in parsed, false);
+  const spec = parsed.hookSpecificOutput;
+  if (spec && typeof spec === "object") {
+    assert.equal("additionalContext" in spec, false);
+  }
+});
+
+test("Stop hung evidence with stop_blocking true fails open", async () => {
+  const dataRoot = tmp("devkit-hook-data-");
+  const repo = makeRepo();
+  const binDir = tmp("devkit-hook-bin-");
+  writeHungNpm(binDir);
+  const env = isolatedEnv(dataRoot, { pathPrefix: [binDir] });
+  const ctx = await createContext({ repoPath: repo, env });
+  await playbookRecord(ctx, {
+    raw_command: "npm test",
+    tool_name: "Bash",
+    cwd: repo,
+    exit_code: 0,
+    duration_ms: 12,
+  });
+  const config = writeBlockingConfig(["  evidence:", "    timeout_ms: 400"]);
+  const started = Date.now();
+  const result = await runHook("stop", stopPayload(repo, { text: "that's all" }), env, {
+    path: repo,
+    config,
+  });
+  const elapsed = Date.now() - started;
+  assert.equal(result.code, 0);
+  assert.equal(result.out.trim(), "");
+  assert.equal(result.out.includes("additionalContext"), false);
+  assert.equal(result.out.includes('"decision"'), false);
+  assert.ok(elapsed < 5000, `elapsed ${elapsed}ms waited on hung evidence`);
+});
+
+test("hook fail-open on bad JSON missing cwd and unknown kind", async () => {
+  const dataRoot = tmp("devkit-hook-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot);
+  const bad = await runHookRaw(["node", "devkit", "--path", repo, "hook", "stop"], "{", env);
+  assert.equal(bad.code, 0);
+  assert.equal(bad.out, "");
+  const missingCwd = await runHook("stop", { hook_event_name: "Stop" }, env, { path: repo });
+  assert.equal(missingCwd.code, 0);
+  assert.equal(missingCwd.out, "");
+  const unknown = await runHook("nonesuch", { cwd: repo, hook_event_name: "Stop" }, env, {
+    path: repo,
+  });
+  assert.equal(unknown.code, 0);
+  assert.equal(unknown.out, "");
+  const bogus = await runHookRaw(["node", "devkit", "--bogus", "hook", "stop"], "{}", env);
+  assert.equal(bogus.code, 0);
+  assert.equal(bogus.out, "");
+  assert.equal(bogus.err, "");
+});
+
+test("SessionStart stale mapping with no CBM is graph missing", async () => {
+  const dataRoot = tmp("devkit-hook-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot);
+  const ctx = await createContext({ repoPath: repo, env });
+  mkdirSync(ctx.paths.graphDir, { recursive: true });
+  writeFileSync(
+    ctx.paths.cbmProjectFile,
+    `${JSON.stringify({
+      version: 1,
+      repo_id: ctx.repoId,
+      root_path: repo,
+      cbm_project: "stale",
+      mode: "moderate",
+      last_status: "ready",
+      last_indexed_at: new Date().toISOString(),
+      nodes: 1,
+      edges: 1,
+    })}\n`,
+  );
+  const result = await runHook("session-start", sessionStartPayload(repo), env, { path: repo });
+  assert.equal(result.code, 0);
+  assert.match(additionalContext(result.out), /^graph: missing$/m);
+});
+
+test("Claude fragment registers PostToolUseFailure Bash", () => {
+  const fragmentPath = fileURLToPath(
+    new URL("../../adapters/claude-code/settings.fragment.json", import.meta.url),
+  );
+  const fragment = JSON.parse(readFileSync(fragmentPath, "utf8")) as {
+    hooks?: { PostToolUseFailure?: Array<{ matcher?: string }> };
+  };
+  const failHooks = fragment.hooks?.PostToolUseFailure ?? [];
+  assert.ok(failHooks.some((entry) => entry.matcher === "Bash"));
 });

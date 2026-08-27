@@ -168,6 +168,31 @@ function parseWaitTimeout(raw: string | undefined): number | undefined {
   return n;
 }
 
+function argvHasHookCommand(argv: string[]): boolean {
+  const args = argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === undefined) {
+      continue;
+    }
+    if (
+      a === "--path" ||
+      a === "--config" ||
+      a === "--verification" ||
+      a === "--mode" ||
+      a === "--wait-timeout-sec"
+    ) {
+      i += 1;
+      continue;
+    }
+    if (a.startsWith("-")) {
+      continue;
+    }
+    return a === "hook";
+  }
+  return false;
+}
+
 function writeError(io: CliIo, err: unknown): number {
   if (isPlatformError(err)) {
     io.stderr.write(`devkit: ${err.message}\n`);
@@ -189,6 +214,9 @@ export async function runCli(
   try {
     args = parseArgv(argv);
   } catch (err) {
+    if (argvHasHookCommand(argv)) {
+      return 0;
+    }
     return writeError(io, err);
   }
 

@@ -77,7 +77,7 @@ Commands:
   review     Review a branch, diff, or step (plugin)
   finish     Evidence summary and remaining steps (plugin)
   issue-to-pr  Issue to pull request or stack (plugin)
-  stack      Stacked GitHub pull requests (plugin)
+  stack      Publish stacked GitHub pull requests (plugin)
   skill      Show shipped skill body plus personal override
   init [--mode fast|moderate|full] [--wait-timeout-sec N] [--fetch-cbm]
              Prepare the local graph index
@@ -398,6 +398,24 @@ export async function runPluginCli(
           evidencePurpose: parsed.evidencePurpose,
           forceEvidence: parsed.forceEvidence,
           acceptPatch: parsed.acceptPatch,
+        },
+        env,
+        io,
+      );
+    } catch (err) {
+      return writeErr(io, err, platform);
+    }
+  }
+
+  if (parsed.pluginCommand === "stack") {
+    try {
+      const { runStackCommand } = await import("./lib/stack/command.js");
+      return await runStackCommand(
+        platform,
+        {
+          remaining: parsed.remaining,
+          plan: parsed.plan,
+          rest: parsed.pluginRest,
         },
         env,
         io,

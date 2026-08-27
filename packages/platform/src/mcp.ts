@@ -29,6 +29,8 @@ export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
 export type McpRunOpts = {
   cwd?: string;
   env?: EnvMap;
+  configFile?: string;
+  verification?: string;
 };
 
 const GRAPH_SEARCH_SCHEMA = {
@@ -114,7 +116,6 @@ const TOOLS: Tool[] = [
     name: "playbook_lookup",
     description: "Return at most 5 playbook commands that match purpose or prefix.",
     inputSchema: PLAYBOOK_LOOKUP_SCHEMA,
-    annotations: { readOnlyHint: true },
   },
   {
     name: "playbook_record",
@@ -274,32 +275,71 @@ function errorResult(err: unknown, env: EnvMap): CallToolResult {
   return mcpResult({ error: { code: "internal", message: errorMessage(err) } }, true);
 }
 
-async function dispatch(name: string, args: unknown, cwd: string, env: EnvMap): Promise<unknown> {
+async function dispatch(name: string, args: unknown, opts: McpRunOpts): Promise<unknown> {
   if (!MCP_TOOL_NAMES.includes(name as McpToolName)) {
     throw new PlatformError("not_found", `Unknown tool ${name}`);
   }
   const tool = name as McpToolName;
-  const ctx = await createContext({ repoPath: cwd, env });
+  const parsed = parseToolArgs(tool, args);
+  const ctx = await createContext({
+    repoPath: opts.cwd,
+    env: opts.env,
+    ...(opts.configFile ? { configFile: opts.configFile } : {}),
+    ...(opts.verification ? { verification: opts.verification } : {}),
+  });
+  switch (parsed.tool) {
+    case "graph_search":
+      return graphSearch(ctx, parsed.q);
+    case "graph_symbol":
+      return graphSymbol(ctx, parsed.q);
+    case "graph_impact":
+      return graphImpact(ctx, parsed.q);
+    case "playbook_lookup":
+      return playbookLookup(ctx, parsed.q);
+    case "playbook_record":
+      return playbookRecord(ctx, {
+        raw_command: parsed.q.raw_command,
+        cwd: parsed.q.cwd,
+        exit_code: parsed.q.exit,
+        duration_ms: parsed.q.duration,
+        // ObserveEvent.tool_name is required; hooks record Bash.
+        tool_name: parsed.q.tool_name ?? "Bash",
+      });
+    default: {
+      const _never: never = parsed;
+      throw new PlatformError("not_found", `Unknown tool ${String(_never)}`);
+    }
+  }
+}
+
+type ParsedTool =
+  | { tool: "graph_search"; q: { query: string; path?: string } }
+  | { tool: "graph_symbol"; q: { name: string } }
+  | { tool: "graph_impact"; q: { path?: string; symbol?: string } }
+  | { tool: "playbook_lookup"; q: { purpose?: string; prefix?: string } }
+  | {
+      tool: "playbook_record";
+      q: {
+        raw_command: string;
+        cwd: string;
+        exit: number;
+        duration: number;
+        tool_name?: string;
+      };
+    };
+
+function parseToolArgs(tool: McpToolName, args: unknown): ParsedTool {
   switch (tool) {
     case "graph_search":
-      return graphSearch(ctx, parseGraphSearch(args));
+      return { tool, q: parseGraphSearch(args) };
     case "graph_symbol":
-      return graphSymbol(ctx, parseGraphSymbol(args));
+      return { tool, q: parseGraphSymbol(args) };
     case "graph_impact":
-      return graphImpact(ctx, parseGraphImpact(args));
+      return { tool, q: parseGraphImpact(args) };
     case "playbook_lookup":
-      return playbookLookup(ctx, parsePlaybookLookup(args));
-    case "playbook_record": {
-      const rec = parsePlaybookRecord(args);
-      return playbookRecord(ctx, {
-        raw_command: rec.raw_command,
-        cwd: rec.cwd,
-        exit_code: rec.exit,
-        duration_ms: rec.duration,
-        // ObserveEvent.tool_name is required; hooks record Bash.
-        tool_name: rec.tool_name ?? "Bash",
-      });
-    }
+      return { tool, q: parsePlaybookLookup(args) };
+    case "playbook_record":
+      return { tool, q: parsePlaybookRecord(args) };
     default: {
       const _never: never = tool;
       throw new PlatformError("not_found", `Unknown tool ${_never}`);
@@ -310,7 +350,7 @@ async function dispatch(name: string, args: unknown, cwd: string, env: EnvMap): 
 export function createMcpServer(opts: McpRunOpts = {}): Server {
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
-  // McpServer sets tools.listChanged true; harnesses must restart after upgrades.
+  // McpServer forces listChanged true.
   const server = new Server(
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
     { capabilities: { tools: { listChanged: false } } },
@@ -321,7 +361,12 @@ export function createMcpServer(opts: McpRunOpts = {}): Server {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
-      const payload = await dispatch(request.params.name, request.params.arguments, cwd, env);
+      const payload = await dispatch(request.params.name, request.params.arguments, {
+        cwd,
+        env,
+        ...(opts.configFile ? { configFile: opts.configFile } : {}),
+        ...(opts.verification ? { verification: opts.verification } : {}),
+      });
       return mcpResult(payload, false);
     } catch (err) {
       return errorResult(err, env);

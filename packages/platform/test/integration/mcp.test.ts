@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -117,8 +117,9 @@ async function withMemoryClient(
   cwd: string,
   env: NodeJS.ProcessEnv,
   fn: (client: Client) => Promise<void>,
+  extra: { configFile?: string; verification?: string } = {},
 ): Promise<void> {
-  const server = createMcpServer({ cwd, env });
+  const server = createMcpServer({ cwd, env, ...extra });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "devkit-test", version: "0.0.0" });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -159,6 +160,7 @@ test("tools/list has five tools with design JSON Schema", async () => {
     assert.equal((impact?.inputSchema.oneOf as unknown[]).length, 2);
     const lookup = listed.tools.find((t) => t.name === "playbook_lookup");
     assert.ok(Array.isArray(lookup?.inputSchema.anyOf));
+    assert.notEqual(lookup?.annotations?.readOnlyHint, true);
     const record = listed.tools.find((t) => t.name === "playbook_record");
     assert.match(record?.description ?? "", /writes|Write/i);
     assert.match(record?.description ?? "", /hooks/i);
@@ -275,6 +277,49 @@ test("isError is true only for PlatformError", async () => {
   });
 });
 
+test("bad tools/call does not create playbook dir", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot);
+  const playbooks = join(dataRoot, "devkit", "playbooks");
+  await withMemoryClient(repo, env, async (client) => {
+    const badImpact = await client.callTool({
+      name: "graph_impact",
+      arguments: { path: "src/http.ts", symbol: "HandleRequest" },
+    });
+    assert.equal(isCallToolResult(badImpact) && Boolean(badImpact.isError), true);
+    assert.equal((toolPayload(badImpact).error as { code?: string }).code, "usage");
+    const badLookup = await client.callTool({
+      name: "playbook_lookup",
+      arguments: {},
+    });
+    assert.equal(isCallToolResult(badLookup) && Boolean(badLookup.isError), true);
+    assert.equal(existsSync(playbooks), false);
+  });
+  assert.equal(existsSync(playbooks), false);
+});
+
+test("mcp passes verification into createContext", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const env = isolatedEnv(dataRoot);
+  const playbooks = join(dataRoot, "devkit", "playbooks");
+  await withMemoryClient(
+    repo,
+    env,
+    async (client) => {
+      const looked = await client.callTool({
+        name: "playbook_lookup",
+        arguments: { purpose: "test" },
+      });
+      assert.equal(isCallToolResult(looked) && Boolean(looked.isError), true);
+      assert.equal((toolPayload(looked).error as { code?: string }).code, "config");
+    },
+    { verification: "nope" },
+  );
+  assert.equal(existsSync(playbooks), false);
+});
+
 test("graph tools return short hits after init", async () => {
   chmodSync(fakeCbmBin, 0o755);
   const dataRoot = tmp("devkit-data-");
@@ -319,13 +364,15 @@ test("devkit mcp stdio lists five tools and keeps stdout as JSON-RPC", async () 
   chmodSync(fakeCbmBin, 0o755);
   const dataRoot = tmp("devkit-data-");
   const repo = makeRepo();
+  const otherCwd = tmp("devkit-mcp-cwd-");
   const env = isolatedEnv(dataRoot);
-  assert.equal(existsSync(join(dataRoot, "devkit", "playbooks")), false);
+  const playbooks = join(dataRoot, "devkit", "playbooks");
+  assert.equal(existsSync(playbooks), false);
   const stderrChunks: string[] = [];
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [tsxCli, platformCli, "mcp"],
-    cwd: repo,
+    args: [tsxCli, platformCli, "--path", repo, "mcp"],
+    cwd: otherCwd,
     env: stringEnv(env),
     stderr: "pipe",
   });
@@ -340,6 +387,20 @@ test("devkit mcp stdio lists five tools and keeps stdout as JSON-RPC", async () 
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((t) => t.name).sort(), [...MCP_TOOL_NAMES].sort());
     assert.equal(listed.tools.length, 5);
+    assert.equal(existsSync(playbooks), false);
+    const looked = await client.callTool({
+      name: "playbook_lookup",
+      arguments: { purpose: "test" },
+    });
+    assert.equal(isCallToolResult(looked) && Boolean(looked.isError), false);
+    assert.deepEqual(toolPayload(looked).commands, []);
+    assert.equal(existsSync(playbooks), true);
+    const ids = readdirSync(playbooks);
+    assert.equal(ids.length, 1);
+    const identity = JSON.parse(
+      readFileSync(join(playbooks, ids[0] ?? "", "identity.json"), "utf8"),
+    ) as { kind: string };
+    assert.equal(identity.kind, "common-dir");
   } finally {
     await client.close();
   }

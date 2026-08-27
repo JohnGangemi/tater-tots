@@ -249,7 +249,12 @@ export async function runCli(
       return writeError(io, new PlatformError("usage", "mcp takes no extra arguments"));
     }
     try {
-      await runMcpServer({ env, cwd: process.cwd() });
+      await runMcpServer({
+        env,
+        cwd: args.path ?? process.cwd(),
+        ...(args.config ? { configFile: args.config } : {}),
+        ...(args.verification ? { verification: args.verification } : {}),
+      });
       return 0;
     } catch (err) {
       return writeError(io, err);

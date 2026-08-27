@@ -28,3 +28,18 @@ export {
   type GraphImpactOut,
 } from "./lib/graph/tools.js";
 export type { Hit } from "./lib/graph/parse.js";
+export {
+  playbookLookup,
+  playbookRecord,
+  playbook_record,
+  playbookList,
+  playbookStats,
+  type LookupIn,
+  type LookupOut,
+  type ObserveEvent,
+  type PlaybookEntry,
+  type PlaybookFile,
+  type PlaybookRecordResult,
+  type PlaybookStatsOut,
+  type PurposeTag,
+} from "./lib/playbook/store.js";

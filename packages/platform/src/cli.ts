@@ -3,10 +3,12 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadConfig, type IndexMode } from "./lib/config.js";
-import { createContext } from "./lib/context.js";
+import { createContext, type PlatformContext } from "./lib/context.js";
 import { errorMessage, exitCodeFor, isPlatformError, PlatformError } from "./lib/errors.js";
-import { formatInitStdout, initGraph } from "./lib/graph/init.js";
 import type { HttpsGet } from "./lib/graph/cbm-fetch.js";
+import { formatInitStdout, initGraph } from "./lib/graph/init.js";
+import { playbookList, playbookStats } from "./lib/playbook/store.js";
+import { COMMAND_SHOW_MAX, SHOW_DEFAULT, SHOW_MAX } from "./lib/playbook/types.js";
 
 export type CliArgs = {
   help: boolean;
@@ -105,6 +107,10 @@ export function parseArgv(argv: string[]): CliArgs {
       continue;
     }
     if (a.startsWith("-")) {
+      if (out.command) {
+        out.rest.push(a);
+        continue;
+      }
       throw new PlatformError("usage", `Unknown flag ${a}`);
     }
     if (!out.command) {
@@ -210,8 +216,8 @@ export async function runCli(
     return 0;
   }
 
-  try {
-    if (args.command === "init") {
+  if (args.command === "init") {
+    try {
       const mode = parseInitMode(args.mode);
       const waitTimeoutSec = parseWaitTimeout(args.waitTimeoutSec);
       const ctx = await createContext({
@@ -232,8 +238,14 @@ export async function runCli(
       });
       io.stdout.write(formatInitStdout(ctx, result));
       return 0;
+    } catch (err) {
+      return writeError(io, err);
     }
-    await createContext({
+  }
+
+  let ctx: PlatformContext;
+  try {
+    ctx = await createContext({
       repoPath: args.path,
       configFile: args.config,
       verification: args.verification,
@@ -243,8 +255,81 @@ export async function runCli(
     return writeError(io, err);
   }
 
+  if (args.command === "playbook") {
+    try {
+      return await runPlaybookCli(ctx, args.rest, io);
+    } catch (err) {
+      return writeError(io, err);
+    }
+  }
+
   io.stderr.write(`devkit: ${args.command} is not implemented\n`);
   return 1;
+}
+
+function parseShowLimit(rest: string[]): number {
+  let limit = SHOW_DEFAULT;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === undefined) {
+      continue;
+    }
+    if (a === "--limit" || a.startsWith("--limit=")) {
+      let value = "";
+      if (a.startsWith("--limit=")) {
+        value = a.slice("--limit=".length);
+      } else {
+        const next = rest[i + 1];
+        if (!next || next.startsWith("-")) {
+          throw new PlatformError("usage", "Flag --limit needs a value");
+        }
+        value = next;
+        i += 1;
+      }
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 1) {
+        throw new PlatformError("usage", "Flag --limit needs a positive integer");
+      }
+      limit = Math.min(n, SHOW_MAX);
+      continue;
+    }
+    if (a.startsWith("-")) {
+      throw new PlatformError("usage", `Unknown flag ${a}`);
+    }
+    throw new PlatformError("usage", `Unexpected argument ${a}`);
+  }
+  return limit;
+}
+
+function truncCommand(command: string): string {
+  if (command.length <= COMMAND_SHOW_MAX) {
+    return command;
+  }
+  return `${command.slice(0, COMMAND_SHOW_MAX - 3)}...`;
+}
+
+async function runPlaybookCli(ctx: PlatformContext, rest: string[], io: CliIo): Promise<number> {
+  const sub = rest[0];
+  if (sub === "show") {
+    const limit = parseShowLimit(rest.slice(1));
+    const rows = await playbookList(ctx, limit);
+    io.stdout.write("key\tstatus\tcount\tcommand\n");
+    for (const row of rows) {
+      io.stdout.write(
+        `${row.key}\t${row.last_status}\t${row.run_count}\t${truncCommand(row.command)}\n`,
+      );
+    }
+    return 0;
+  }
+  if (sub === "stats") {
+    if (rest.length > 1) {
+      throw new PlatformError("usage", "playbook stats takes no extra arguments");
+    }
+    const stats = await playbookStats(ctx);
+    io.stdout.write(`${JSON.stringify(stats, null, 2)}\n`);
+    return 0;
+  }
+  throw new PlatformError("usage", "Unknown playbook command (use show or stats)");
 }
 
 function startedFromCli(): boolean {

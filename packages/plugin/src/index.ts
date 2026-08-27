@@ -62,6 +62,7 @@ export {
   resolveSubagent,
   buildPacket,
   currentStackItem,
+  stackItemComplete,
 } from "./lib/index.js";
 export type {
   PlatformModule,
@@ -75,6 +76,7 @@ export type {
   ProgressEvent,
   StackPr,
   StepStatus,
+  StackSkipOpts,
   CoordinatorOpts,
   MarkStepOpts,
   PlanIntent,

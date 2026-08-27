@@ -574,6 +574,26 @@ test("T-ST-08 gh missing after pushed exits 0 and skips pr create", async () => 
   assert.equal(packet.stack_phase, "checked_out");
   assert.equal(packet.stack_branch, "feat/b");
   assert.notEqual(packet.hint, "PR not opened because gh is missing.");
+
+  const imp = captureIo();
+  const impCode = await runPluginCli(
+    ["node", "devkit", "--path", repo, "implement"],
+    env,
+    imp.io,
+  );
+  assert.equal(impCode, 0, imp.err());
+  assert.doesNotMatch(imp.err(), /run devkit stack publish/);
+  const impPacket = JSON.parse(imp.out()) as {
+    resume_step_id?: string;
+    stack_phase?: string;
+    stack_branch?: string;
+  };
+  assert.equal(impPacket.resume_step_id, "S2");
+  assert.equal(impPacket.stack_phase, "checked_out");
+  assert.equal(impPacket.stack_branch, "feat/b");
+  const afterImp = await loadCoordinator(ctx);
+  assert.equal(afterImp.steps[1]?.status, "in_progress");
+  assert.equal(afterImp.steps[0]?.status, "done");
 });
 
 test("commit path refuses when HEAD is not the stack branch", async () => {

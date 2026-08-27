@@ -5,6 +5,7 @@ import {
   currentStackItem,
   resumeAfterMark,
   resumeStep,
+  type StackSkipOpts,
 } from "../coordinator/resume.js";
 import { withProgressLock } from "../coordinator/store.js";
 import {
@@ -33,6 +34,8 @@ import type { PlatformModule } from "../platform-guard.js";
 import { loadPluginConfig, type PluginConfig } from "../plugin-config.js";
 import { buildPacket } from "../subagents/packet.js";
 import { resolveSubagent } from "../subagents/resolve.js";
+import { ghAvailable } from "../stack/gh.js";
+import { hasOrigin } from "../stack/git.js";
 import { worktreeHash } from "../worktree.js";
 
 export type ImplementCliIo = {
@@ -82,6 +85,11 @@ function skippedSnap(at: string): EvidenceSnap {
   };
 }
 
+function stackSkip(ctx: PlatformContext): StackSkipOpts {
+  const git = { cwd: ctx.repoPath, env: ctx.env };
+  return { hasGh: ghAvailable(git), hasRemote: hasOrigin(git) };
+}
+
 function applyStatus(
   record: CoordinatorRecord,
   step: CoordinatorStep,
@@ -89,6 +97,7 @@ function applyStatus(
   extra: {
     evidence?: EvidenceSnap | null;
     blocked_reason?: string | null;
+    skip?: StackSkipOpts;
   } = {},
 ): void {
   step.status = status;
@@ -111,12 +120,20 @@ function applyStatus(
   }
   record.events.push(ev);
   record.updated_at = at;
-  record.resume_step_id = resumeAfterMark(record, step.id, status);
+  record.resume_step_id = resumeAfterMark(
+    record,
+    step.id,
+    status,
+    extra.skip,
+  );
 }
 
-function implementHint(record: CoordinatorRecord): string {
+function implementHint(
+  record: CoordinatorRecord,
+  skip?: StackSkipOpts,
+): string {
   if (record.stack.enabled) {
-    const item = currentStackItem(record);
+    const item = currentStackItem(record, skip);
     if (item?.phase === "checked_out") {
       const left = record.steps.some(
         (s) => s.stack_id === item.stack_id && !TERMINAL.has(s.status),
@@ -129,14 +146,17 @@ function implementHint(record: CoordinatorRecord): string {
   return htmlHint(record.html_path);
 }
 
-function stackPhase(record: CoordinatorRecord): {
+function stackPhase(
+  record: CoordinatorRecord,
+  skip?: StackSkipOpts,
+): {
   stack_phase: RunPacket["stack_phase"];
   stack_branch: string | null;
 } {
   if (!record.stack.enabled) {
     return { stack_phase: null, stack_branch: null };
   }
-  const item = currentStackItem(record);
+  const item = currentStackItem(record, skip);
   return {
     stack_phase: item?.phase ?? null,
     stack_branch: item?.branch ?? null,
@@ -154,6 +174,7 @@ function findStep(record: CoordinatorRecord, id: string): CoordinatorStep {
 function assertStackPause(
   record: CoordinatorRecord,
   stepId: string | null,
+  skip?: StackSkipOpts,
 ): void {
   if (!record.stack.enabled) {
     return;
@@ -161,7 +182,7 @@ function assertStackPause(
   if (record.stack.prs.length === 0) {
     throw new PluginError("usage", "stack.enabled but stack.prs is empty");
   }
-  const item = currentStackItem(record);
+  const item = currentStackItem(record, skip);
   if (!item) {
     return;
   }
@@ -251,9 +272,10 @@ async function runPacket(
   step: CoordinatorStep | null,
   io: ImplementCliIo,
   extra: Partial<RunPacket> = {},
+  skip?: StackSkipOpts,
 ): Promise<void> {
   const wt = worktreeHash(ctx.repoPath);
-  const stack = stackPhase(record);
+  const stack = stackPhase(record, skip);
   let packet: RunPacket["packet"] = null;
   let dispatch: RunPacket["dispatch"] = null;
   if (step) {
@@ -279,7 +301,7 @@ async function runPacket(
     packet,
     skill: "implement",
     override_loaded: overrideLoaded(ctx, "implement"),
-    hint: implementHint(record),
+    hint: implementHint(record, skip),
     ...extra,
   });
 }
@@ -334,8 +356,9 @@ export async function runImplementCommand(
         );
       }
 
-      const targetId = argv.step ?? resumeStep(record);
-      assertStackPause(record, targetId);
+      const skip = stackSkip(ctx);
+      const targetId = argv.step ?? resumeStep(record, skip);
+      assertStackPause(record, targetId, skip);
       const sessionId = newAdversarialSessionId();
       await runAdversarialPrefix(
         ctx,
@@ -351,10 +374,19 @@ export async function runImplementCommand(
       if (!mark) {
         if (!targetId) {
           record.resume_step_id = null;
-          await runPacket(ctx, record, cfg, platform, null, io, {
-            dispatch: null,
-            packet: null,
-          });
+          await runPacket(
+            ctx,
+            record,
+            cfg,
+            platform,
+            null,
+            io,
+            {
+              dispatch: null,
+              packet: null,
+            },
+            skip,
+          );
           logPlugin(env, {
             event: "plugin.implement.resume",
             repo_id: ctx.repoId,
@@ -366,7 +398,7 @@ export async function runImplementCommand(
         const step = findStep(record, targetId);
         let dirty = false;
         if (step.status === "pending") {
-          applyStatus(record, step, "in_progress");
+          applyStatus(record, step, "in_progress", { skip });
           dirty = true;
         }
         if (record.resume_step_id !== step.id) {
@@ -376,7 +408,7 @@ export async function runImplementCommand(
         if (dirty) {
           await api.write(record);
         }
-        await runPacket(ctx, record, cfg, platform, step, io);
+        await runPacket(ctx, record, cfg, platform, step, io, {}, skip);
         logPlugin(env, {
           event: "plugin.implement.resume",
           repo_id: ctx.repoId,
@@ -392,12 +424,21 @@ export async function runImplementCommand(
       const step = findStep(record, targetId);
 
       if (mark !== "done") {
-        applyStatus(record, step, mark);
+        applyStatus(record, step, mark, { skip });
         await api.write(record);
-        await runPacket(ctx, record, cfg, platform, null, io, {
-          dispatch: null,
-          packet: null,
-        });
+        await runPacket(
+          ctx,
+          record,
+          cfg,
+          platform,
+          null,
+          io,
+          {
+            dispatch: null,
+            packet: null,
+          },
+          skip,
+        );
         logPlugin(env, {
           event: "plugin.implement.resume",
           repo_id: ctx.repoId,
@@ -410,12 +451,24 @@ export async function runImplementCommand(
       const level = ctx.config.resolved_level;
       if (level === "off") {
         const at = new Date().toISOString();
-        applyStatus(record, step, "done", { evidence: skippedSnap(at) });
-        await api.write(record);
-        await runPacket(ctx, record, cfg, platform, null, io, {
-          dispatch: null,
-          packet: null,
+        applyStatus(record, step, "done", {
+          evidence: skippedSnap(at),
+          skip,
         });
+        await api.write(record);
+        await runPacket(
+          ctx,
+          record,
+          cfg,
+          platform,
+          null,
+          io,
+          {
+            dispatch: null,
+            packet: null,
+          },
+          skip,
+        );
         logPlugin(env, {
           event: "plugin.implement.resume",
           repo_id: ctx.repoId,
@@ -441,6 +494,7 @@ export async function runImplementCommand(
         applyStatus(record, step, "blocked", {
           evidence: snap,
           blocked_reason: `evidence ${result.verdict}`,
+          skip,
         });
         await api.write(record);
         logPlugin(env, {
@@ -454,12 +508,21 @@ export async function runImplementCommand(
           `evidence ${result.verdict}`,
         );
       }
-      applyStatus(record, step, "done", { evidence: snap });
+      applyStatus(record, step, "done", { evidence: snap, skip });
       await api.write(record);
-      await runPacket(ctx, record, cfg, platform, null, io, {
-        dispatch: null,
-        packet: null,
-      });
+      await runPacket(
+        ctx,
+        record,
+        cfg,
+        platform,
+        null,
+        io,
+        {
+          dispatch: null,
+          packet: null,
+        },
+        skip,
+      );
       logPlugin(env, {
         event: "plugin.implement.resume",
         repo_id: ctx.repoId,

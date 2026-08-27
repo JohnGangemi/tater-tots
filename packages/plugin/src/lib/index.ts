@@ -26,7 +26,12 @@ export {
   type CoordinatorOpts,
   type MarkStepOpts,
 } from "./coordinator/store.js";
-export { resumeStep, currentStackItem } from "./coordinator/resume.js";
+export {
+  resumeStep,
+  currentStackItem,
+  stackItemComplete,
+} from "./coordinator/resume.js";
+export type { StackSkipOpts } from "./coordinator/resume.js";
 export type {
   AdversarialStatus,
   CoordinatorRecord,

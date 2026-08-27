@@ -6,7 +6,11 @@ import {
   seedStackPrs,
   topoStackItems,
 } from "../coordinator/seed-stack.js";
-import { currentStackItem } from "../coordinator/resume.js";
+import {
+  currentStackItem,
+  stackItemComplete,
+  type StackSkipOpts,
+} from "../coordinator/resume.js";
 import { parsePlanMd } from "../coordinator/parse-plan-md.js";
 import {
   TERMINAL,
@@ -170,42 +174,8 @@ function itemTitle(
   return raw.split("\n")[0]?.trim() || item.stack_id;
 }
 
-function localCompleteWithoutGh(
-  item: StackPr,
-  hasGh: boolean,
-  remote: boolean,
-): boolean {
-  if (hasGh) {
-    return false;
-  }
-  if (item.phase === "pushed") {
-    return true;
-  }
-  return item.phase === "committed" && !remote;
-}
-
-function nextWorkItem(
-  record: CoordinatorRecord,
-  hasGh: boolean,
-  remote: boolean,
-): StackPr | undefined {
-  return record.stack.prs.find((p) => {
-    if (p.phase === "pr_created") {
-      return false;
-    }
-    if (localCompleteWithoutGh(p, hasGh, remote)) {
-      return false;
-    }
-    return true;
-  });
-}
-
-function moreHint(
-  record: CoordinatorRecord,
-  hasGh: boolean,
-  remote: boolean,
-): string {
-  return nextWorkItem(record, hasGh, remote)
+function moreHint(record: CoordinatorRecord, skip: StackSkipOpts): string {
+  return currentStackItem(record, skip)
     ? "run devkit stack publish"
     : "stack complete";
 }
@@ -255,21 +225,20 @@ export async function publishStack(opts: {
   seedIfEmpty(record);
   const hasGh = ghAvailable(git);
   const remote = hasOrigin(git);
+  const skip: StackSkipOpts = { hasGh, hasRemote: remote };
   resolveDefaultBranch(record, git, hasGh);
 
   const items = loadStackItems(record);
-  let item = currentStackItem(record);
+  const raw = record.stack.prs.find((p) => p.phase !== "pr_created");
+  let item = currentStackItem(record, skip);
+  if (raw && stackItemComplete(raw, skip)) {
+    noteGhMissing(io);
+    if (!item) {
+      return { record, hint: "stack complete", item: raw };
+    }
+  }
   if (!item) {
     return { record, hint: "stack complete", item: lastPr(record) };
-  }
-
-  if (localCompleteWithoutGh(item, hasGh, remote)) {
-    noteGhMissing(io);
-    const next = nextWorkItem(record, hasGh, remote);
-    if (!next) {
-      return { record, hint: "stack complete", item };
-    }
-    item = next;
   }
 
   const base = () => resolveStackBase(record, item, items);
@@ -334,7 +303,7 @@ export async function publishStack(opts: {
   if (item.phase === "pushed") {
     if (!hasGh) {
       noteGhMissing(io);
-      return { record, hint: moreHint(record, hasGh, remote), item };
+      return { record, hint: moreHint(record, skip), item };
     }
     const created = ghCreatePr(
       {
@@ -347,7 +316,7 @@ export async function publishStack(opts: {
     );
     if (created.missing) {
       noteGhMissing(io);
-      return { record, hint: moreHint(record, hasGh, remote), item };
+      return { record, hint: moreHint(record, skip), item };
     }
     item.pr_url = created.pr.url;
     item.pr_number = created.pr.number;
@@ -362,14 +331,14 @@ export async function publishStack(opts: {
     });
     return {
       record,
-      hint: moreHint(record, hasGh, remote),
+      hint: moreHint(record, skip),
       item,
     };
   }
 
   if (!hasGh) {
     noteGhMissing(io);
-    return { record, hint: moreHint(record, hasGh, remote), item };
+    return { record, hint: moreHint(record, skip), item };
   }
   return { record, hint: "run devkit stack publish", item };
 }

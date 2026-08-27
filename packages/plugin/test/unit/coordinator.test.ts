@@ -18,7 +18,10 @@ import { parse as parseYaml } from "yaml";
 import { createContext, ingestProgress } from "@coredevkit/platform";
 import { PluginError } from "../../src/lib/errors.js";
 import { writeProgressAtomic } from "../../src/lib/fs-user.js";
-import { resumeStep } from "../../src/lib/coordinator/resume.js";
+import {
+  currentStackItem,
+  resumeStep,
+} from "../../src/lib/coordinator/resume.js";
 import {
   loadCoordinator,
   markStep,
@@ -436,6 +439,31 @@ test("resume after done stays in the current stack item", async () => {
 
   rec.stack.prs[0] = stackPr("A", "pr_created");
   assert.equal(resumeStep(rec), "S2");
+});
+
+test("resume skip-ahead when gh is missing uses the checked_out item", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const ctx = await createContext({
+    repoPath: repo,
+    env: isolatedEnv(dataRoot),
+  });
+  const s1 = step("S1", "A last", "done");
+  s1.stack_id = "A";
+  const s2 = step("S2", "B first", "pending");
+  s2.stack_id = "B";
+  const rec = sampleRecord(ctx, [s1, s2]);
+  rec.resume_step_id = "S1";
+  rec.stack = {
+    enabled: true,
+    default_branch: "main",
+    prs: [stackPr("A", "pushed"), stackPr("B", "checked_out")],
+  };
+  const skip = { hasGh: false, hasRemote: true };
+  assert.equal(currentStackItem(rec)?.stack_id, "A");
+  assert.equal(currentStackItem(rec, skip)?.stack_id, "B");
+  assert.equal(resumeStep(rec), null);
+  assert.equal(resumeStep(rec, skip), "S2");
 });
 
 test("resume does not walk every step when no item is checked_out", async () => {

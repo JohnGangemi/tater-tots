@@ -209,6 +209,30 @@ async function main() {
   }
   if (tool === "search_graph") {
     saveState(state);
+    const pat = flags["file-pattern"];
+    if (typeof pat === "string" && pat.length > 0) {
+      const name = basename(String(pat).replace(/\\/g, ""));
+      const file = `src/${name}`;
+      print({
+        groups: [
+          {
+            prefix: "demo.src",
+            file,
+            rows: [
+              {
+                name: name.replace(/\.[^.]+$/, "") || name,
+                label: "File",
+                lines: "1-1",
+                qn: file,
+              },
+            ],
+          },
+        ],
+        has_more: false,
+        total: 1,
+      });
+      return;
+    }
     print(searchBody());
     return;
   }

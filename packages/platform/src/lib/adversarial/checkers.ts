@@ -1,7 +1,8 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { basename, delimiter, isAbsolute, join } from "node:path";
+import { basename, delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import type { PlatformContext } from "../context.js";
 import { isPlatformError } from "../errors.js";
+import { escapeRegExp } from "../graph/parse.js";
 import { graphSearch } from "../graph/tools.js";
 import { pathExistsInRepo, splitArgv } from "../playbook/normalize.js";
 import { playbookList } from "../playbook/store.js";
@@ -70,14 +71,47 @@ function isExecutableFile(path: string): boolean {
   }
 }
 
+function posixRel(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function samePlanPath(a: string, b: string): boolean {
+  return posixRel(a) === posixRel(b);
+}
+
+function jailRel(repoPath: string, hitPath: string): string | undefined {
+  const posix = posixRel(hitPath);
+  if (!posix) {
+    return undefined;
+  }
+  const abs = isAbsolute(hitPath) ? hitPath : resolve(repoPath, hitPath);
+  const rel = relative(repoPath, abs);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+    return undefined;
+  }
+  const out = posixRel(rel);
+  if (out.split("/").includes("..")) {
+    return undefined;
+  }
+  return out;
+}
+
 export function commandOnDisk(command: string, repoPath: string, env: NodeJS.ProcessEnv): boolean {
   const argv = splitArgv(command);
   const bin = argv[0];
   if (!bin) {
     return false;
   }
-  if (bin.includes("/") || bin.includes("\\") || isAbsolute(bin)) {
-    return pathExistsInRepo(repoPath, bin);
+  if (isAbsolute(bin)) {
+    return isExecutableFile(bin);
+  }
+  if (bin.includes("/") || bin.includes("\\")) {
+    const abs = resolve(repoPath, bin);
+    const rel = relative(repoPath, abs);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+      return false;
+    }
+    return isExecutableFile(abs);
   }
   const dirs = (env.PATH ?? env.Path ?? "").split(delimiter).filter((p) => p.length > 0);
   const hasDot = basename(bin).includes(".");
@@ -101,16 +135,24 @@ async function similarGraphPath(
   if (!base) {
     return undefined;
   }
-  const out = await withGraph(gate, () => graphSearch(ctx, { query: base, path: base }));
+  // Space keeps query out of name-pattern so file-pattern can match a path.
+  const out = await withGraph(gate, () =>
+    graphSearch(ctx, { query: "file match", path: escapeRegExp(base) }),
+  );
   if (!out) {
     return undefined;
   }
-  const miss = missing.replace(/\\/g, "/");
-  const hit = out.hits.find((h) => {
-    const p = h.path.replace(/\\/g, "/");
-    return p.length > 0 && p !== miss && !p.endsWith(`/${miss}`) && p !== `./${miss}`;
-  });
-  return hit?.path;
+  for (const h of out.hits) {
+    if (basename(h.path) !== base) {
+      continue;
+    }
+    const jailed = jailRel(ctx.repoPath, h.path);
+    if (!jailed || samePlanPath(jailed, missing)) {
+      continue;
+    }
+    return jailed;
+  }
+  return undefined;
 }
 
 export async function checkPaths(

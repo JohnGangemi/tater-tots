@@ -43,17 +43,21 @@ function resolvePlanPath(repoPath: string, planPath: string): string {
   if (!abs.endsWith(".md") && !planPath.endsWith(".md")) {
     throw new PlatformError("usage", "plan_path must end with .md");
   }
-  let real: string;
-  try {
-    real = realpathSync(abs);
-  } catch {
-    throw new PlatformError("not_found", `Plan file not found: ${planPath}`);
-  }
   let realRepo = repoPath;
   try {
     realRepo = realpathSync(repoPath);
   } catch {
     // keep repoPath
+  }
+  // Jail on the resolved path first so outside files are not probed.
+  if (!isInsideRepo(repoPath, abs) && !isInsideRepo(realRepo, abs)) {
+    throw new PlatformError("usage", "plan_path must be inside the repo");
+  }
+  let real: string;
+  try {
+    real = realpathSync(abs);
+  } catch {
+    throw new PlatformError("not_found", `Plan file not found: ${planPath}`);
   }
   if (!isInsideRepo(realRepo, real)) {
     throw new PlatformError("usage", "plan_path must be inside the repo");

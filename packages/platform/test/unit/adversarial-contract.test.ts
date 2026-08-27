@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   mkdirSync,
   mkdtempSync,
@@ -8,13 +9,17 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { runCli, type CliIo } from "../../src/cli.js";
+import { commandOnDisk } from "../../src/lib/adversarial/checkers.js";
 import { applyFindingContract, FINDING_CAP } from "../../src/lib/adversarial/contract.js";
+import { extractCommands } from "../../src/lib/adversarial/parse.js";
 import { adversarialReview } from "../../src/lib/adversarial/review.js";
 import type { Finding } from "../../src/lib/adversarial/types.js";
 import { createContext } from "../../src/lib/context.js";
@@ -23,6 +28,8 @@ import { playbookRecord } from "../../src/lib/playbook/store.js";
 
 const dirs: string[] = [];
 const fixtureDir = fileURLToPath(new URL("../fixtures/plans", import.meta.url));
+const fakeCbmDir = fileURLToPath(new URL("../fixtures/fake-cbm", import.meta.url));
+const fakeCbmBin = join(fakeCbmDir, "codebase-memory-mcp");
 
 function tmp(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -55,15 +62,19 @@ function makeRepo(): string {
   return dir;
 }
 
-function isolatedEnv(dataRoot: string): NodeJS.ProcessEnv {
+function isolatedEnv(dataRoot: string, extra: { withFakeCbm?: boolean } = {}): NodeJS.ProcessEnv {
   const home = tmp("devkit-home-");
+  const pathParts = extra.withFakeCbm
+    ? [fakeCbmDir, dirname(process.execPath), "/usr/bin", "/bin"]
+    : [dirname(process.execPath), "/usr/bin", "/bin"];
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     DEVKIT_DATA_DIR: dataRoot,
     XDG_CONFIG_HOME: tmp("devkit-xdg-"),
     HOME: home,
     USERPROFILE: home,
-    PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
+    PATH: pathParts.join(delimiter),
+    FAKE_CBM_STATE: join(tmp("fake-cbm-state-"), "state.json"),
   };
   delete env.DEVKIT_CBM_BINARY;
   delete env.DEVKIT_VERIFICATION;
@@ -72,6 +83,13 @@ function isolatedEnv(dataRoot: string): NodeJS.ProcessEnv {
   delete env.DEVKIT_PLAYBOOK_RESET;
   delete env.CODEX_HOME;
   return env;
+}
+
+function silentIo(): CliIo {
+  return {
+    stdout: { write: () => true } as unknown as NodeJS.WritableStream,
+    stderr: { write: () => true } as unknown as NodeJS.WritableStream,
+  };
 }
 
 function putPlan(repo: string, name: string): string {
@@ -367,6 +385,122 @@ test("review rejects plan_path that is not .md", async () => {
     (err: unknown) => {
       assert.equal(err instanceof PlatformError, true);
       assert.equal((err as PlatformError).code, "usage");
+      return true;
+    },
+  );
+});
+
+test("bullet Test: prose is not a command finding", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const plan = putPlan(repo, "pass.md");
+  const text = readFileSync(plan, "utf8");
+  assert.match(text, /^- Test: add coverage$/m);
+  assert.deepEqual(extractCommands(text), []);
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  const out = await adversarialReview(ctx, { plan_path: "pass.md" });
+  assert.equal(out.verdict, "PASS");
+  assert.equal(
+    out.findings.some((f) => f.category === "command"),
+    false,
+  );
+});
+
+test("review PATCH when graph has a similar path for a missing basename", async () => {
+  chmodSync(fakeCbmBin, 0o755);
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  putPlan(repo, "similar-path.md");
+  const env = isolatedEnv(dataRoot, { withFakeCbm: true });
+  const code = await runCli(["node", "devkit", "--path", repo, "init"], env, silentIo());
+  assert.equal(code, 0);
+  const ctx = await createContext({ repoPath: repo, env });
+  const out = await adversarialReview(ctx, { plan_path: "similar-path.md" });
+  assert.equal(out.graph_ready, true);
+  assert.equal(out.verdict, "PATCH");
+  const pathHit = out.findings.find((f) => f.category === "path");
+  assert.equal(pathHit?.tag, "patch-plan");
+  assert.equal(pathHit?.evidence_type, "graph");
+  assert.equal(pathHit?.plan_target, "ok.ts");
+  assert.equal(pathHit?.patch, "src/ok.ts");
+});
+
+test("commandOnDisk treats absolute PATH binaries as executable", () => {
+  const repo = makeRepo();
+  const env = isolatedEnv(tmp("devkit-data-"));
+  assert.equal(commandOnDisk(process.execPath, repo, env), true);
+  assert.equal(commandOnDisk("/no/such/coredevkit-bin", repo, env), false);
+});
+
+test("commandOnDisk requires +x for relative scripts inside the repo", () => {
+  const repo = makeRepo();
+  const env = isolatedEnv(tmp("devkit-data-"));
+  mkdirSync(join(repo, "scripts"));
+  const script = join(repo, "scripts", "check.sh");
+  writeFileSync(script, "#!/bin/sh\nexit 0\n");
+  chmodSync(script, 0o644);
+  assert.equal(commandOnDisk("./scripts/check.sh", repo, env), false);
+  chmodSync(script, 0o755);
+  assert.equal(commandOnDisk("./scripts/check.sh", repo, env), true);
+});
+
+test("review PASS when the plan cites an absolute executable", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  writeFileSync(
+    join(repo, "abs.md"),
+    `# Plan\n\n1. Run the helper.\n2. Keep \`src/ok.ts\`.\n\nrun: ${process.execPath}\n`,
+  );
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  const out = await adversarialReview(ctx, { plan_path: "abs.md" });
+  assert.equal(out.verdict, "PASS");
+  assert.equal(
+    out.findings.some((f) => f.category === "command"),
+    false,
+  );
+});
+
+test("review rejects a missing plan outside the repo as usage", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const outside = join(tmp("devkit-ar-out-"), "missing.md");
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  await assert.rejects(
+    () => adversarialReview(ctx, { plan_path: outside }),
+    (err: unknown) => {
+      assert.equal(err instanceof PlatformError, true);
+      assert.equal((err as PlatformError).code, "usage");
+      return true;
+    },
+  );
+});
+
+test("review rejects a symlink that leaves the repo", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const outside = join(tmp("devkit-ar-out-"), "plan.md");
+  writeFileSync(outside, "# Plan\n\n1. Step.\n");
+  symlinkSync(outside, join(repo, "link.md"));
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  await assert.rejects(
+    () => adversarialReview(ctx, { plan_path: "link.md" }),
+    (err: unknown) => {
+      assert.equal(err instanceof PlatformError, true);
+      assert.equal((err as PlatformError).code, "usage");
+      return true;
+    },
+  );
+});
+
+test("review returns not_found for a missing in-repo plan", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const ctx = await createContext({ repoPath: repo, env: isolatedEnv(dataRoot) });
+  await assert.rejects(
+    () => adversarialReview(ctx, { plan_path: "gone.md" }),
+    (err: unknown) => {
+      assert.equal(err instanceof PlatformError, true);
+      assert.equal((err as PlatformError).code, "not_found");
       return true;
     },
   );

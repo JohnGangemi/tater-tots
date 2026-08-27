@@ -209,6 +209,32 @@ async function main() {
   }
   if (tool === "search_graph") {
     saveState(state);
+    const pat = flags["file-pattern"];
+    const hasTextQuery = flags.query !== undefined || flags["name-pattern"] !== undefined;
+    // Escaped basename, no BM25 query: similar-path review. Other file-pattern stays HandleRequest.
+    if (typeof pat === "string" && pat.includes("\\.") && !pat.includes("/") && !hasTextQuery) {
+      const name = basename(String(pat).replace(/\\/g, ""));
+      const file = `src/${name}`;
+      print({
+        groups: [
+          {
+            prefix: "demo.src",
+            file,
+            rows: [
+              {
+                name: name.replace(/\.[^.]+$/, "") || name,
+                label: "File",
+                lines: "1-1",
+                qn: file,
+              },
+            ],
+          },
+        ],
+        has_more: false,
+        total: 1,
+      });
+      return;
+    }
     print(searchBody());
     return;
   }

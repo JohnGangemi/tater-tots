@@ -6,6 +6,7 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { adversarialReview } from "./lib/adversarial/review.js";
 import { createContext } from "./lib/context.js";
 import { evidenceCheck } from "./lib/evidence/check.js";
 import { errorMessage, isPlatformError, PlatformError } from "./lib/errors.js";
@@ -24,6 +25,7 @@ export const MCP_TOOL_NAMES = [
   "playbook_lookup",
   "playbook_record",
   "evidence_check",
+  "adversarial_review",
 ] as const;
 
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
@@ -105,6 +107,15 @@ const EVIDENCE_CHECK_SCHEMA = {
   additionalProperties: false,
 };
 
+const ADVERSARIAL_REVIEW_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    plan_path: { type: "string", minLength: 1, maxLength: 400 },
+  },
+  required: ["plan_path"],
+  additionalProperties: false,
+};
+
 const TOOLS: Tool[] = [
   {
     name: "graph_search",
@@ -142,6 +153,13 @@ const TOOLS: Tool[] = [
       "Run a local command or a playbook command. This tool executes a local command. It returns pass or fail and a short tail.",
     inputSchema: EVIDENCE_CHECK_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "adversarial_review",
+    description:
+      "Read-only review of a plan file. Does not edit the plan. Returns a verdict and at most 7 findings.",
+    inputSchema: ADVERSARIAL_REVIEW_SCHEMA,
+    annotations: { readOnlyHint: true },
   },
 ];
 
@@ -251,6 +269,14 @@ function parseEvidenceCheck(raw: unknown): {
   };
 }
 
+function parseAdversarialReview(raw: unknown): { plan_path: string } {
+  const obj = asObject(raw);
+  noExtra(obj, ["plan_path"]);
+  return {
+    plan_path: readString(obj, "plan_path", { required: true, min: 1, max: 400 }) as string,
+  };
+}
+
 function parsePlaybookRecord(raw: unknown): {
   raw_command: string;
   cwd: string;
@@ -346,6 +372,8 @@ async function dispatch(name: string, args: unknown, opts: McpRunOpts): Promise<
       });
     case "evidence_check":
       return evidenceCheck(ctx, parsed.q);
+    case "adversarial_review":
+      return adversarialReview(ctx, parsed.q);
     default: {
       const _never: never = parsed;
       throw new PlatformError("not_found", `Unknown tool ${String(_never)}`);
@@ -368,7 +396,8 @@ type ParsedTool =
         tool_name?: string;
       };
     }
-  | { tool: "evidence_check"; q: { command?: string; purpose?: string; force?: boolean } };
+  | { tool: "evidence_check"; q: { command?: string; purpose?: string; force?: boolean } }
+  | { tool: "adversarial_review"; q: { plan_path: string } };
 
 function parseToolArgs(tool: McpToolName, args: unknown): ParsedTool {
   switch (tool) {
@@ -384,6 +413,8 @@ function parseToolArgs(tool: McpToolName, args: unknown): ParsedTool {
       return { tool, q: parsePlaybookRecord(args) };
     case "evidence_check":
       return { tool, q: parseEvidenceCheck(args) };
+    case "adversarial_review":
+      return { tool, q: parseAdversarialReview(args) };
     default: {
       const _never: never = tool;
       throw new PlatformError("not_found", `Unknown tool ${_never}`);

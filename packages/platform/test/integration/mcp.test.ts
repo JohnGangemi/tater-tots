@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -137,7 +146,7 @@ after(() => {
   }
 });
 
-test("tools/list has six tools with design JSON Schema", async () => {
+test("tools/list has registered tools with design JSON Schema", async () => {
   const dataRoot = tmp("devkit-data-");
   const repo = makeRepo();
   const env = isolatedEnv(dataRoot);
@@ -147,14 +156,18 @@ test("tools/list has six tools with design JSON Schema", async () => {
     const listed = await client.listTools();
     const names = listed.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [...MCP_TOOL_NAMES].sort());
-    assert.equal(listed.tools.length, 6);
+    assert.equal(listed.tools.length, MCP_TOOL_NAMES.length);
     assert.equal(
       listed.tools.some((t) => t.name.startsWith("tune_")),
       false,
     );
     assert.equal(
       listed.tools.some((t) => t.name === "adversarial_review"),
-      false,
+      true,
+    );
+    assert.equal(
+      listed.tools.some((t) => t.name === "evidence_check"),
+      true,
     );
     const search = listed.tools.find((t) => t.name === "graph_search");
     assert.equal(search?.inputSchema.type, "object");
@@ -174,6 +187,11 @@ test("tools/list has six tools with design JSON Schema", async () => {
     assert.equal(evidence?.inputSchema.additionalProperties, false);
     assert.equal(evidence?.annotations?.readOnlyHint, false);
     assert.match(evidence?.description ?? "", /execut/i);
+    const review = listed.tools.find((t) => t.name === "adversarial_review");
+    assert.deepEqual(review?.inputSchema.required, ["plan_path"]);
+    assert.equal(review?.inputSchema.additionalProperties, false);
+    assert.equal(review?.annotations?.readOnlyHint, true);
+    assert.match(review?.description ?? "", /does not edit|read-only/i);
   });
 });
 
@@ -304,9 +322,39 @@ test("bad tools/call does not create playbook dir", async () => {
       arguments: {},
     });
     assert.equal(isCallToolResult(badLookup) && Boolean(badLookup.isError), true);
+    const badReview = await client.callTool({
+      name: "adversarial_review",
+      arguments: {},
+    });
+    assert.equal(isCallToolResult(badReview) && Boolean(badReview.isError), true);
+    assert.equal((toolPayload(badReview).error as { code?: string }).code, "usage");
     assert.equal(existsSync(playbooks), false);
   });
   assert.equal(existsSync(playbooks), false);
+});
+
+test("adversarial_review MCP returns a contract payload and does not edit the plan", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  mkdirSync(join(repo, "src"));
+  writeFileSync(join(repo, "src", "ok.ts"), "export {}\n");
+  const plan = join(repo, "pass.md");
+  writeFileSync(plan, "# Plan\n\n1. Add the helper in `src/ok.ts`.\n2. Keep the numbered steps.\n");
+  const before = readFileSync(plan, "utf8");
+  const env = isolatedEnv(dataRoot);
+  await withMemoryClient(repo, env, async (client) => {
+    const reviewed = await client.callTool({
+      name: "adversarial_review",
+      arguments: { plan_path: "pass.md" },
+    });
+    assert.equal(isCallToolResult(reviewed) && Boolean(reviewed.isError), false);
+    const body = toolPayload(reviewed);
+    assert.equal(body.verdict, "PASS");
+    assert.ok(Array.isArray(body.findings));
+    assert.ok((body.findings as unknown[]).length <= 7);
+    assert.equal(body.resolved_level, "light");
+  });
+  assert.equal(readFileSync(plan, "utf8"), before);
 });
 
 test("mcp passes verification into createContext", async () => {
@@ -370,7 +418,7 @@ test("graph tools return short hits after init", async () => {
   });
 });
 
-test("devkit mcp stdio lists six tools and keeps stdout as JSON-RPC", async () => {
+test("devkit mcp stdio lists registered tools and keeps stdout as JSON-RPC", async () => {
   chmodSync(fakeCbmBin, 0o755);
   const dataRoot = tmp("devkit-data-");
   const repo = makeRepo();

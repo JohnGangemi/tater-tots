@@ -50,3 +50,12 @@ export {
   type EvidenceResult,
   type EvidenceVerdict,
 } from "./lib/evidence/check.js";
+export { adversarialReview } from "./lib/adversarial/review.js";
+export type {
+  AdversarialInput,
+  AdversarialResult,
+  EvidenceType,
+  Finding,
+  FindingTag,
+  Verdict,
+} from "./lib/adversarial/types.js";

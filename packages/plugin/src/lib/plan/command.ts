@@ -59,7 +59,7 @@ function buildDispatch(
   intent: PlanIntent | null,
   goal: string,
 ): { dispatch: RunPacket["dispatch"]; packet: SubagentPacket } {
-  const designer = !intent || needsPlanDesigner(intent);
+  const designer = Boolean(intent && needsPlanDesigner(intent));
   const role = designer ? "plan-designer" : "explorer";
   const agent = cfg.subagents[role];
   const packet: SubagentPacket = {

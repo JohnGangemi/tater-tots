@@ -71,7 +71,7 @@ Options:
   --fetch-cbm             Fetch the graph binary during init
 
 Commands:
-  plan       Write dual plan output (plugin)
+  plan       Plan packet, render HTML, or start coordinator (plugin)
   implement  Resume and mark coordinator steps (plugin)
   debug      Graph + playbook packet for a failure (plugin)
   review     Review a branch, diff, or step (plugin)

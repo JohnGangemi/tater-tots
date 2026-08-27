@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 import { createContext } from "@coredevkit/platform";
 import { runPluginCli, type PluginCliIo } from "../../src/cli.js";
@@ -254,10 +254,12 @@ test("T-PL-01 render and start-coordinator write under user-data plans dir", asy
   const packet = JSON.parse(goalCap.out()) as {
     command?: string;
     plan_dir?: string;
-    packet?: { goal?: string };
+    dispatch?: { role?: string } | null;
+    packet?: { goal?: string; role?: string };
   };
   assert.equal(packet.command, "plan");
   assert.equal(packet.packet?.goal, "invent a plan from the goal");
+  assert.equal(packet.dispatch, null);
   const goalPlanDir = join(
     goalCtx.paths.plansDir,
     worktreeHash(goalCtx.repoPath).worktree_hash,
@@ -279,4 +281,32 @@ test("T-PL-01 render and start-coordinator write under user-data plans dir", asy
   );
   assert.equal(missCode, 3);
   assert.match(missCap.err(), /run devkit init/);
+});
+
+test("render-plan-html wrapper omits --plan when no dir is given", async () => {
+  const url = new URL(
+    "../../skills/writing-plans/scripts/render-plan-html.js",
+    import.meta.url,
+  );
+  const mod = (await import(url.href)) as {
+    renderSpawnArgs: (argv: string[]) => { args?: string[]; error?: string };
+  };
+  const none = mod.renderSpawnArgs([]);
+  assert.deepEqual(none.args, ["plan", "--render"]);
+  const withPlan = mod.renderSpawnArgs(["--plan", "/tmp/plan-dir"]);
+  assert.deepEqual(withPlan.args, [
+    "plan",
+    "--render",
+    "--plan",
+    resolve("/tmp/plan-dir"),
+  ]);
+  const positional = mod.renderSpawnArgs(["/tmp/pos"]);
+  assert.deepEqual(positional.args, [
+    "plan",
+    "--render",
+    "--plan",
+    resolve("/tmp/pos"),
+  ]);
+  const missing = mod.renderSpawnArgs(["--plan"]);
+  assert.equal(missing.error, "Flag --plan needs a value");
 });

@@ -26,11 +26,12 @@ Default files live in user-data
    markdown from `--goal`.
 2. Call `graph_search` / `graph_symbol` / `graph_impact` first. Stop the
    explore path when they respond.
-3. Dispatch `plan-designer` when there is more than one component or a
-   process with two or more required steps. Plan Designer writes
-   `plan.intent.json` only. Do not let it write `plan.md`, `plan.html`,
-   or source.
-4. If the packet does not dispatch Plan Designer, write a small
+3. After graph results, dispatch `plan-designer` when there is more than
+   one component or a process with two or more required steps. The first
+   packet does not set dispatch; you choose after graph. Plan Designer
+   writes `plan.intent.json` only. Do not let it write `plan.md`,
+   `plan.html`, or source.
+4. If you do not dispatch Plan Designer, write a small
    `plan.intent.json` yourself. Follow `references/intent-schema.md`.
    Required: `version` (1), `title`, `summary`, `goal`, `agent_plan`.
    Always include the arrays. Set `process.complete` true only when

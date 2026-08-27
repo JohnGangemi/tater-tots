@@ -23,6 +23,12 @@ export type CbmFlags = Record<string, string | number | boolean | undefined>;
 export type CbmCliOpts = {
   timeoutMs: number;
   binary?: string;
+  signal?: AbortSignal;
+};
+
+export type CbmDiscoverOpts = {
+  timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 type SpawnResult = {
@@ -137,9 +143,13 @@ function killTree(child: ChildProcess): void {
 function runCbm(
   binary: string,
   args: string[],
-  opts: { timeoutMs: number; env: EnvMap },
+  opts: { timeoutMs: number; env: EnvMap; signal?: AbortSignal },
 ): Promise<SpawnResult> {
   return new Promise((resolvePromise) => {
+    if (opts.signal?.aborted) {
+      resolvePromise({ status: null, stdout: "", stderr: "", timedOut: true });
+      return;
+    }
     let done = false;
     let timedOut = false;
     // stdin ignore: CBM waits on an open stdin pipe. detached: timeout can kill the group.
@@ -157,6 +167,11 @@ function runCbm(
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr.push(chunk);
     });
+    const onAbort = () => {
+      timedOut = true;
+      killTree(child);
+    };
+    opts.signal?.addEventListener("abort", onAbort);
     const timer = setTimeout(() => {
       timedOut = true;
       killTree(child);
@@ -167,6 +182,7 @@ function runCbm(
       }
       done = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
       resolvePromise({
         status,
         stdout: Buffer.concat(stdout).toString("utf8"),
@@ -362,11 +378,19 @@ function candidateBinaries(ctx: PlatformContext): string[] {
   return out;
 }
 
-async function binaryMeetsMin(path: string, env: EnvMap): Promise<boolean> {
+async function binaryMeetsMin(
+  path: string,
+  env: EnvMap,
+  opts: { timeoutMs: number; signal?: AbortSignal },
+): Promise<boolean> {
   if (!isExecutableFile(path)) {
     return false;
   }
-  const result = await runCbm(path, ["--version"], { timeoutMs: VERSION_TIMEOUT_MS, env });
+  const result = await runCbm(path, ["--version"], {
+    timeoutMs: opts.timeoutMs,
+    env,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
   if (result.timedOut) {
     return false;
   }
@@ -377,9 +401,16 @@ async function binaryMeetsMin(path: string, env: EnvMap): Promise<boolean> {
   return versionGte(parts, CBM_MIN_VERSION_PARTS);
 }
 
-export async function discoverCbmBinary(ctx: PlatformContext): Promise<string | undefined> {
+export async function discoverCbmBinary(
+  ctx: PlatformContext,
+  opts: CbmDiscoverOpts = {},
+): Promise<string | undefined> {
   const seen = new Set<string>();
+  const started = Date.now();
   for (const cand of candidateBinaries(ctx)) {
+    if (opts.signal?.aborted) {
+      return undefined;
+    }
     if (!existsSync(cand)) {
       continue;
     }
@@ -388,15 +419,34 @@ export async function discoverCbmBinary(ctx: PlatformContext): Promise<string | 
       continue;
     }
     seen.add(real);
-    if (await binaryMeetsMin(real, ctx.env)) {
+    let versionTimeout = VERSION_TIMEOUT_MS;
+    if (opts.timeoutMs !== undefined) {
+      const left = opts.timeoutMs - (Date.now() - started);
+      if (left <= 0) {
+        return undefined;
+      }
+      versionTimeout = Math.max(1, left);
+    }
+    if (
+      await binaryMeetsMin(real, ctx.env, {
+        timeoutMs: versionTimeout,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      })
+    ) {
       return real;
     }
   }
   return undefined;
 }
 
-export async function requireCbmBinary(ctx: PlatformContext): Promise<string> {
-  const found = await discoverCbmBinary(ctx);
+export async function requireCbmBinary(
+  ctx: PlatformContext,
+  opts: CbmDiscoverOpts = {},
+): Promise<string> {
+  const found = await discoverCbmBinary(ctx, opts);
+  if (opts.signal?.aborted) {
+    throw graphTimeout("codebase-memory-mcp discovery timed out");
+  }
   if (!found) {
     throw graphUnavailable(
       `codebase-memory-mcp >= ${CBM_MIN_VERSION} is not available`,
@@ -452,14 +502,27 @@ export async function cbmCli(
   flags: CbmFlags,
   opts: CbmCliOpts,
 ): Promise<unknown> {
-  const binary = opts.binary ?? (await requireCbmBinary(ctx));
+  const started = Date.now();
+  const binary =
+    opts.binary ??
+    (await requireCbmBinary(
+      ctx,
+      opts.signal ? { timeoutMs: opts.timeoutMs, signal: opts.signal } : {},
+    ));
   const nextFlags = { ...flags };
   const repoPath = nextFlags["repo-path"];
   if (typeof repoPath === "string") {
     nextFlags["repo-path"] = confineRepoPath(ctx, repoPath);
   }
   const args = ["cli", "--json", tool, ...encodeCbmFlags(nextFlags)];
-  const result = await runCbm(binary, args, { timeoutMs: opts.timeoutMs, env: ctx.env });
+  const spawnTimeout = opts.signal
+    ? Math.max(1, opts.timeoutMs - (Date.now() - started))
+    : opts.timeoutMs;
+  const result = await runCbm(binary, args, {
+    timeoutMs: spawnTimeout,
+    env: ctx.env,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
   const combined = `${result.stdout}\n${result.stderr}`;
   if (result.timedOut) {
     throwIfAdmission(combined);

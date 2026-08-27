@@ -2,15 +2,17 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runHookCommand } from "./hook.js";
 import { loadConfig, type IndexMode } from "./lib/config.js";
 import { createContext, type PlatformContext } from "./lib/context.js";
 import { errorMessage, exitCodeFor, isPlatformError, PlatformError } from "./lib/errors.js";
+import { evidenceCheck, type EvidenceInput, type EvidenceResult } from "./lib/evidence/check.js";
 import type { HttpsGet } from "./lib/graph/cbm-fetch.js";
 import { formatInitStdout, initGraph } from "./lib/graph/init.js";
-import { evidenceCheck, type EvidenceInput, type EvidenceResult } from "./lib/evidence/check.js";
-import { runMcpServer } from "./mcp.js";
+import { logPlatform } from "./lib/log.js";
 import { playbookList, playbookStats } from "./lib/playbook/store.js";
 import { COMMAND_SHOW_MAX, SHOW_DEFAULT, SHOW_MAX } from "./lib/playbook/types.js";
+import { runMcpServer } from "./mcp.js";
 
 export type CliArgs = {
   help: boolean;
@@ -166,6 +168,31 @@ function parseWaitTimeout(raw: string | undefined): number | undefined {
   return n;
 }
 
+function argvHasHookCommand(argv: string[]): boolean {
+  const args = argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === undefined) {
+      continue;
+    }
+    if (
+      a === "--path" ||
+      a === "--config" ||
+      a === "--verification" ||
+      a === "--mode" ||
+      a === "--wait-timeout-sec"
+    ) {
+      i += 1;
+      continue;
+    }
+    if (a.startsWith("-")) {
+      continue;
+    }
+    return a === "hook";
+  }
+  return false;
+}
+
 function writeError(io: CliIo, err: unknown): number {
   if (isPlatformError(err)) {
     io.stderr.write(`devkit: ${err.message}\n`);
@@ -187,6 +214,9 @@ export async function runCli(
   try {
     args = parseArgv(argv);
   } catch (err) {
+    if (argvHasHookCommand(argv)) {
+      return 0;
+    }
     return writeError(io, err);
   }
 
@@ -277,6 +307,30 @@ export async function runCli(
     } catch (err) {
       return writeError(io, err);
     }
+  }
+
+  if (args.command === "hook") {
+    try {
+      await runHookCommand({
+        rest: args.rest,
+        env,
+        io: {
+          stdout: io.stdout,
+          stderr: io.stderr,
+          ...(io.stdin ? { stdin: io.stdin } : {}),
+        },
+        ...(args.path ? { path: args.path } : {}),
+        ...(args.config ? { config: args.config } : {}),
+        ...(args.verification ? { verification: args.verification } : {}),
+      });
+    } catch (err) {
+      logPlatform(env, {
+        component: "hook",
+        event: "hook_fail_open",
+        ...(isPlatformError(err) ? { code: err.code } : { code: "internal" }),
+      });
+    }
+    return 0;
   }
 
   let ctx: PlatformContext;

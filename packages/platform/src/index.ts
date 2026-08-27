@@ -59,3 +59,14 @@ export type {
   FindingTag,
   Verdict,
 } from "./lib/adversarial/types.js";
+export {
+  ingestProgress,
+  recordSignal,
+  tuneAccept,
+  tuneReject,
+  tuneRevert,
+  tuneShow,
+  tuneStatus,
+  writeProposal,
+} from "./lib/tune/store.js";
+export type { Proposal, Signal, SignalKind, TuneStatusOut } from "./lib/tune/types.js";

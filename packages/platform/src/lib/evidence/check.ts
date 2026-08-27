@@ -4,10 +4,11 @@ import { basename, delimiter, extname, isAbsolute, join, relative, resolve } fro
 import type { PlatformContext } from "../context.js";
 import { logPlatform } from "../log.js";
 import type { EnvMap } from "../paths.js";
-import { splitArgv } from "../playbook/normalize.js";
+import { makeKey, purposeTags, splitArgv } from "../playbook/normalize.js";
 import { playbookList, playbookRecord } from "../playbook/store.js";
 import type { PurposeTag } from "../playbook/types.js";
 import { redactArgv, redactText } from "../redact.js";
+import { recordSignal } from "../tune/store.js";
 
 export type EvidenceInput = {
   command?: string;
@@ -568,6 +569,9 @@ export async function evidenceCheck(
     });
     recorded = rec.result;
   }
+  if (verdict === "pass" && recorded === "stored") {
+    await emitEvidenceTune(ctx, argv, input.purpose);
+  }
 
   const out: EvidenceResult = {
     ok: verdict === "pass",
@@ -589,6 +593,47 @@ export async function evidenceCheck(
     duration_ms,
   });
   return out;
+}
+
+async function emitEvidenceTune(
+  ctx: PlatformContext,
+  argv: string[],
+  purpose: string | undefined,
+): Promise<void> {
+  try {
+    const tags = purposeTags(argv);
+    const successKey = makeKey(argv);
+    const want = (purpose?.trim() || tags[0] || "").trim();
+    if (!want || !successKey) {
+      return;
+    }
+    const rows = await playbookList(ctx, ctx.config.playbook.max_entries);
+    for (const row of rows) {
+      if (row.key === successKey) {
+        continue;
+      }
+      const samePurpose =
+        row.purpose_tags.includes(want as PurposeTag) ||
+        row.purpose_tags.some((tag) => tags.includes(tag));
+      if (!samePurpose) {
+        continue;
+      }
+      if (row.fail_count <= 0 && row.last_status !== "fail") {
+        continue;
+      }
+      await recordSignal(ctx, {
+        kind: "evidence_fail_then_success",
+        fact: {
+          purpose: want,
+          failed_key: row.key,
+          success_key: successKey,
+        },
+      });
+      return;
+    }
+  } catch {
+    // tuning must not fail evidence
+  }
 }
 
 export const evidence_check = evidenceCheck;

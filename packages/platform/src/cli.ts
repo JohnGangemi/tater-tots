@@ -12,6 +12,7 @@ import { formatInitStdout, initGraph } from "./lib/graph/init.js";
 import { logPlatform } from "./lib/log.js";
 import { playbookList, playbookStats } from "./lib/playbook/store.js";
 import { COMMAND_SHOW_MAX, SHOW_DEFAULT, SHOW_MAX } from "./lib/playbook/types.js";
+import { tuneAccept, tuneReject, tuneRevert, tuneShow, tuneStatus } from "./lib/tune/store.js";
 import { runMcpServer } from "./mcp.js";
 
 export type CliArgs = {
@@ -353,6 +354,14 @@ export async function runCli(
     }
   }
 
+  if (args.command === "tune") {
+    try {
+      return await runTuneCli(ctx, args.rest, io);
+    } catch (err) {
+      return writeError(io, err);
+    }
+  }
+
   io.stderr.write(`devkit: ${args.command} is not implemented\n`);
   return 1;
 }
@@ -443,6 +452,58 @@ function evidenceGateExit(result: EvidenceResult): number {
     return 2;
   }
   return 1;
+}
+
+async function runTuneCli(ctx: PlatformContext, rest: string[], io: CliIo): Promise<number> {
+  const sub = rest[0];
+  if (sub === "status") {
+    if (rest.length > 1) {
+      throw new PlatformError("usage", "tune status takes no extra arguments");
+    }
+    const out = await tuneStatus(ctx);
+    io.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+    return 0;
+  }
+  if (sub === "show") {
+    const id = rest[1];
+    if (!id || rest.length > 2) {
+      throw new PlatformError("usage", "tune show needs a proposal id");
+    }
+    const proposal = await tuneShow(ctx, id);
+    io.stdout.write(`${JSON.stringify(proposal, null, 2)}\n`);
+    return 0;
+  }
+  if (sub === "accept") {
+    const id = rest[1];
+    if (!id || rest.length > 2) {
+      throw new PlatformError("usage", "tune accept needs a proposal id");
+    }
+    await tuneAccept(ctx, id);
+    io.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+    return 0;
+  }
+  if (sub === "reject") {
+    const id = rest[1];
+    if (!id || rest.length > 2) {
+      throw new PlatformError("usage", "tune reject needs a proposal id");
+    }
+    await tuneReject(ctx, id);
+    io.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+    return 0;
+  }
+  if (sub === "revert") {
+    const skill = rest[1];
+    if (!skill || rest.length > 2) {
+      throw new PlatformError("usage", "tune revert needs a skill name");
+    }
+    await tuneRevert(ctx, skill);
+    io.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+    return 0;
+  }
+  throw new PlatformError(
+    "usage",
+    "Unknown tune command (use status, show, accept, reject, or revert)",
+  );
 }
 
 async function runPlaybookCli(ctx: PlatformContext, rest: string[], io: CliIo): Promise<number> {

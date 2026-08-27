@@ -42,6 +42,12 @@ export {
   planFilePaths,
   startCoordinator,
   runPlanCommand,
+  runImplementCommand,
+  evidenceBeforeDone,
+  evidenceGateExit,
+  resolveSubagent,
+  buildPacket,
+  currentStackItem,
 } from "./lib/index.js";
 export type {
   PlatformModule,

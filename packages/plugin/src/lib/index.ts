@@ -26,7 +26,7 @@ export {
   type CoordinatorOpts,
   type MarkStepOpts,
 } from "./coordinator/store.js";
-export { resumeStep } from "./coordinator/resume.js";
+export { resumeStep, currentStackItem } from "./coordinator/resume.js";
 export type {
   AdversarialStatus,
   CoordinatorRecord,
@@ -65,3 +65,7 @@ export { resolvePlanDir, planFilePaths } from "./plan/paths.js";
 export { startCoordinator } from "./plan/start-coordinator.js";
 export { runPlanCommand } from "./plan/command.js";
 export type { RunPacket, SubagentPacket } from "./plan/packet.js";
+export { runImplementCommand } from "./implement/command.js";
+export { evidenceBeforeDone, evidenceGateExit } from "./gates/evidence.js";
+export { resolveSubagent } from "./subagents/resolve.js";
+export { buildPacket } from "./subagents/packet.js";

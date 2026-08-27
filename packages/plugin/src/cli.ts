@@ -109,6 +109,12 @@ export type PluginArgv = {
   startCoordinator: boolean;
   replace: boolean;
   remaining: string[];
+  mark?: string;
+  step?: string;
+  evidenceCommand?: string;
+  evidencePurpose?: string;
+  forceEvidence: boolean;
+  acceptPatch: boolean;
 };
 
 export type RunPluginCliOpts = {
@@ -155,6 +161,8 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
     render: false,
     startCoordinator: false,
     replace: false,
+    forceEvidence: false,
+    acceptPatch: false,
   };
   const args = argv.slice(2);
   for (let i = 0; i < args.length; i++) {
@@ -182,6 +190,18 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
       if (name === "--slug") {
         out.slug = value;
       }
+      if (name === "--mark") {
+        out.mark = value;
+      }
+      if (name === "--step") {
+        out.step = value;
+      }
+      if (name === "--evidence-command") {
+        out.evidenceCommand = value;
+      }
+      if (name === "--evidence-purpose") {
+        out.evidencePurpose = value;
+      }
       i = next;
       continue;
     }
@@ -194,6 +214,12 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
       }
       if (a === "--replace") {
         out.replace = true;
+      }
+      if (a === "--force-evidence") {
+        out.forceEvidence = true;
+      }
+      if (a === "--accept-patch") {
+        out.acceptPatch = true;
       }
       continue;
     }
@@ -296,11 +322,7 @@ export async function runPluginCli(
     return writeErr(io, err);
   }
 
-  if (
-    parsed.help &&
-    (!parsed.pluginCommand || parsed.pluginCommand === "plan") &&
-    !parsed.platformCommand
-  ) {
+  if (parsed.help && !parsed.platformCommand) {
     io.stdout.write(HELP);
     return 0;
   }
@@ -339,6 +361,29 @@ export async function runPluginCli(
           render: parsed.render,
           startCoordinator: parsed.startCoordinator,
           replace: parsed.replace,
+        },
+        env,
+        io,
+      );
+    } catch (err) {
+      return writeErr(io, err, platform);
+    }
+  }
+
+  if (parsed.pluginCommand === "implement") {
+    try {
+      const { runImplementCommand } =
+        await import("./lib/implement/command.js");
+      return await runImplementCommand(
+        platform,
+        {
+          remaining: parsed.remaining,
+          plan: parsed.plan,
+          step: parsed.step,
+          mark: parsed.mark,
+          evidenceCommand: parsed.evidenceCommand,
+          evidencePurpose: parsed.evidencePurpose,
+          forceEvidence: parsed.forceEvidence,
         },
         env,
         io,

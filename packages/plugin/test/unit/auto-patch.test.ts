@@ -179,6 +179,53 @@ Keep this note line
   assert.match(readFileSync(planPath, "utf8"), /exact-line-again/);
 });
 
+test("append extras under an existing Adversarial patches heading", async () => {
+  const planDir = tmp("devkit-plan-section-");
+  const planPath = join(planDir, "plan.md");
+  writeFileSync(
+    planPath,
+    `# Plan
+
+## Adversarial patches
+
+id: AR-OLD
+claim: old
+patch:
+old.ts
+
+## Steps
+
+1. **S1: Keep** — paths \`src/a.ts\`.
+`,
+  );
+  await applyEligiblePatches({
+    planPath,
+    planDir,
+    agentPlan: planPath,
+    findings: [
+      finding({
+        id: "AR-NEW",
+        tag: "patch-plan",
+        plan_target: "missing-path.ts",
+        patch: "found-path.ts",
+        evidence_type: "graph",
+        claim: "No line match",
+      }),
+    ],
+    sessionId: "s",
+    lastSessionId: null,
+  });
+  const md = readFileSync(planPath, "utf8");
+  const patchesAt = md.indexOf("## Adversarial patches");
+  const newAt = md.indexOf("id: AR-NEW");
+  const stepsAt = md.indexOf("## Steps");
+  assert.ok(patchesAt >= 0);
+  assert.ok(newAt > patchesAt);
+  assert.ok(stepsAt > newAt);
+  assert.match(md, /found-path.ts/);
+  assert.match(md, /1\. \*\*S1: Keep\*\*/);
+});
+
 test("T-AR-P-05 jail requires plan.md under plan dir and equal agent_plan", async () => {
   const planDir = tmp("devkit-plan-jail-");
   const other = tmp("devkit-other-");

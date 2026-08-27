@@ -133,6 +133,7 @@ function sampleRecord(
       ran_at: null,
       session_id: null,
       findings_hash: null,
+      findings: [],
     },
     resume_step_id:
       steps.find((s) => s.status === "in_progress" || s.status === "pending")

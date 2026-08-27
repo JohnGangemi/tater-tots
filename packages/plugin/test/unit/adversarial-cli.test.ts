@@ -303,6 +303,73 @@ test("T-AR-P-04 BLOCK exits 2 on packet and mark done", async () => {
   assert.equal(afterMark.adversarial.status, "blocked");
 });
 
+test("BLOCK at full still refuses implement at default light", async () => {
+  const env = isolatedEnv(tmp("devkit-data-"));
+  const repo = makeRepo();
+  const ctx = await startPlan(repo, env);
+  const counts = { review: 0 };
+  const block = mockReview(
+    {
+      verdict: "BLOCK",
+      findings: [
+        finding({
+          tag: "block",
+          claim: "Plan is unsafe",
+          patch: null,
+        }),
+      ],
+      dropped_illegal: 0,
+      graph_ready: false,
+    },
+    counts,
+  );
+
+  const capFull = captureIo();
+  const codeFull = await runPluginCli(
+    ["node", "devkit", "--path", repo, "--verification", "full", "implement"],
+    env,
+    capFull.io,
+    { loadPlatform: block },
+  );
+  assert.equal(codeFull, 2, capFull.err());
+  const reviewsAfterFull = counts.review;
+  assert.ok(reviewsAfterFull >= 1);
+  const blocked = await loadCoordinator(ctx);
+  assert.equal(blocked.adversarial.status, "blocked");
+  assert.equal(blocked.adversarial.verdict, "BLOCK");
+  assert.equal(blocked.adversarial.findings[0]?.claim, "Plan is unsafe");
+
+  const capLight = captureIo();
+  const codeLight = await runPluginCli(
+    ["node", "devkit", "--path", repo, "implement"],
+    env,
+    capLight.io,
+    { loadPlatform: block },
+  );
+  assert.equal(codeLight, 2, capLight.err());
+  assert.match(capLight.err(), /adversarial BLOCK/);
+  assert.match(capLight.err(), /Plan is unsafe/);
+  assert.equal(capLight.out().trim(), "");
+  assert.equal(counts.review, reviewsAfterFull);
+  const afterLight = await loadCoordinator(ctx);
+  assert.equal(afterLight.adversarial.status, "blocked");
+  assert.equal(afterLight.steps[0]?.status, "pending");
+
+  const capMark = captureIo();
+  const codeMark = await runPluginCli(
+    ["node", "devkit", "--path", repo, "implement", "--mark", "done"],
+    env,
+    capMark.io,
+    { loadPlatform: block },
+  );
+  assert.equal(codeMark, 2, capMark.err());
+  assert.match(capMark.err(), /adversarial BLOCK/);
+  const afterMark = await loadCoordinator(ctx);
+  assert.notEqual(afterMark.steps[0]?.status, "done");
+  assert.equal(afterMark.adversarial.status, "blocked");
+  assert.equal(counts.review, reviewsAfterFull);
+});
+
 test("T-AR-P-05 CLI auto_patch applies eligible patch-plan and marks passed", async () => {
   const env = isolatedEnv(tmp("devkit-data-"));
   const repo = makeRepo();
@@ -411,6 +478,9 @@ test("T-AR-P-07 PATCH with auto_patch false waits for --accept-patch", async () 
   assert.notEqual(waiting.adversarial.status, "passed");
   assert.notEqual(waiting.adversarial.status, "blocked");
   assert.equal(waiting.steps[0]?.status, "pending");
+  assert.equal(waiting.adversarial.findings[0]?.id, "AR-001");
+  assert.equal(waiting.adversarial.findings[0]?.tag, "patch-plan");
+  assert.equal(waiting.adversarial.findings[0]?.claim, "Fix heading");
   assert.equal(counts.review, 1);
 
   const capWait = captureIo();
@@ -422,6 +492,8 @@ test("T-AR-P-07 PATCH with auto_patch false waits for --accept-patch", async () 
   );
   assert.equal(codeWait, 2, capWait.err());
   assert.match(capWait.err(), /run devkit implement --accept-patch/);
+  assert.match(capWait.err(), /AR-001/);
+  assert.match(capWait.err(), /Fix heading/);
   assert.equal(counts.review, 1);
   assert.equal(readFileSync(paths.agentPlan, "utf8"), before);
 

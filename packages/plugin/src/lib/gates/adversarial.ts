@@ -8,13 +8,14 @@ import type {
 } from "@coredevkit/platform";
 import { parsePlanMd } from "../coordinator/parse-plan-md.js";
 import type {
+  AdversarialFindingSnap,
   AdversarialStatus,
   CoordinatorRecord,
   CoordinatorStep,
 } from "../coordinator/types.js";
 import { PluginError } from "../errors.js";
 import { logPlugin } from "../log.js";
-import { applyEligiblePatches, isEligibleFinding } from "./auto-patch.js";
+import { applyEligiblePatches } from "./auto-patch.js";
 
 export type AdversarialVerdict = "BLOCK" | "PATCH" | "PASS";
 
@@ -77,13 +78,20 @@ export function findingsHash(findings: Finding[]): string {
     .slice(0, 16);
 }
 
-function printFindings(
+export function snapFindings(findings: Finding[]): AdversarialFindingSnap[] {
+  return findings.map((f) => ({
+    id: f.id,
+    tag: f.tag,
+    claim: f.claim,
+  }));
+}
+
+export function printAdversarialFindings(
   stderr: NodeJS.WritableStream,
-  findings: Finding[],
+  findings: AdversarialFindingSnap[],
 ): void {
   for (const f of findings) {
-    const mark = isEligibleFinding(f) ? "eligible" : f.tag;
-    stderr.write(`${f.id} ${mark}: ${f.claim}\n`);
+    stderr.write(`${f.id} ${f.tag}: ${f.claim}\n`);
   }
 }
 
@@ -123,6 +131,7 @@ function storeRun(
   record.adversarial.ran_at = at;
   record.adversarial.session_id = opts.sessionId;
   record.adversarial.findings_hash = findingsHash(opts.findings);
+  record.adversarial.findings = snapFindings(opts.findings);
   record.updated_at = at;
 }
 
@@ -170,7 +179,7 @@ export async function runAdversarialCheckpoint(
       sessionId,
       findings: result.findings,
     });
-    printFindings(opts.stderr, result.findings);
+    printAdversarialFindings(opts.stderr, record.adversarial.findings);
     logPlugin(ctx.env, {
       event: "plugin.adversarial.blocked",
       repo_id: ctx.repoId,
@@ -193,7 +202,7 @@ export async function runAdversarialCheckpoint(
     return { action: "continue", result };
   }
 
-  printFindings(opts.stderr, result.findings);
+  printAdversarialFindings(opts.stderr, snapFindings(result.findings));
   if (opts.autoPatch) {
     const lastSessionId = record.adversarial.session_id;
     const applied = await applyEligiblePatches({
@@ -252,6 +261,12 @@ export function markAdversarialSkipped(record: CoordinatorRecord): boolean {
     return false;
   }
   if (record.adversarial.verdict === "PATCH") {
+    return false;
+  }
+  if (
+    record.adversarial.status === "blocked" ||
+    record.adversarial.verdict === "BLOCK"
+  ) {
     return false;
   }
   if (record.adversarial.status === "skipped") {

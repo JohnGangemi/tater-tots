@@ -11,6 +11,12 @@ export type StepStatus = (typeof STEP_STATUSES)[number];
 export const ADVERSARIAL_STATUSES = ["skipped", "passed", "blocked"] as const;
 export type AdversarialStatus = (typeof ADVERSARIAL_STATUSES)[number];
 
+export type AdversarialFindingSnap = {
+  id: string;
+  tag: "patch-plan" | "block" | "note";
+  claim: string;
+};
+
 export const TERMINAL: ReadonlySet<StepStatus> = new Set([
   "done",
   "done_by_user",
@@ -101,6 +107,7 @@ export type CoordinatorRecord = {
     ran_at: string | null;
     session_id: string | null;
     findings_hash: string | null;
+    findings: AdversarialFindingSnap[];
   };
   resume_step_id: string | null;
   blocking_open_question_ids: string[];

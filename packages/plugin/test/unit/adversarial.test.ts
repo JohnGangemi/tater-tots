@@ -7,6 +7,7 @@ import { after, test } from "node:test";
 import type { AdversarialResult, Finding } from "@coredevkit/platform";
 import { createContext } from "@coredevkit/platform";
 import {
+  markAdversarialSkipped,
   runAdversarialCheckpoint,
   shouldRunAdversarial,
 } from "../../src/lib/gates/adversarial.js";
@@ -113,6 +114,7 @@ function sampleRecord(
       ran_at: null,
       session_id: null,
       findings_hash: null,
+      findings: [],
     },
     resume_step_id: steps[0]?.id ?? null,
     blocking_open_question_ids: [],
@@ -146,6 +148,24 @@ after(() => {
   for (const dir of dirs) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("markAdversarialSkipped does not overwrite BLOCK", async () => {
+  const env = isolatedEnv(tmp("devkit-data-"));
+  const repo = makeRepo();
+  const ctx = await createContext({ repoPath: repo, env });
+  const rec = sampleRecord(ctx, [step("S1", "Add store")]);
+  rec.adversarial.status = "blocked";
+  rec.adversarial.verdict = "BLOCK";
+  rec.adversarial.findings = [
+    { id: "AR-001", tag: "block", claim: "Plan is unsafe" },
+  ];
+  assert.equal(markAdversarialSkipped(rec), false);
+  assert.equal(rec.adversarial.status, "blocked");
+  rec.adversarial.status = "skipped";
+  rec.adversarial.verdict = "BLOCK";
+  assert.equal(markAdversarialSkipped(rec), false);
+  assert.equal(rec.adversarial.status, "skipped");
 });
 
 test("T-AR-P-01 passed status does not run", () => {

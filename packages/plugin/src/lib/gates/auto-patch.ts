@@ -76,6 +76,7 @@ function appendPatchSection(lines: string[], entries: string[]): string[] {
     return lines;
   }
   const out = lines.slice();
+  const extraLines = entries.join("\n\n").split("\n");
   let idx = -1;
   for (let i = 0; i < out.length; i++) {
     if (/^##[ \t]+Adversarial patches\s*$/.test(out[i] ?? "")) {
@@ -88,13 +89,27 @@ function appendPatchSection(lines: string[], entries: string[]): string[] {
       out.push("");
     }
     out.push("## Adversarial patches", "");
-    out.push(entries.join("\n\n"));
+    out.push(...extraLines);
     return out;
   }
-  if (out.length > 0 && out[out.length - 1] !== "") {
-    out.push("");
+  let insertAt = idx + 1;
+  if (out[insertAt] === "") {
+    insertAt += 1;
   }
-  out.push(entries.join("\n\n"));
+  while (
+    insertAt < out.length &&
+    !/^##[ \t]+/.test(out[insertAt] ?? "")
+  ) {
+    insertAt += 1;
+  }
+  const block = extraLines.slice();
+  if (insertAt > 0 && out[insertAt - 1] !== "") {
+    block.unshift("");
+  }
+  if (insertAt < out.length && out[insertAt] !== "") {
+    block.push("");
+  }
+  out.splice(insertAt, 0, ...block);
   return out;
 }
 

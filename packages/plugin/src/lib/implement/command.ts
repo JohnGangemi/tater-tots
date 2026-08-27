@@ -21,6 +21,7 @@ import {
   acceptAdversarialPatch,
   markAdversarialSkipped,
   newAdversarialSessionId,
+  printAdversarialFindings,
   runAdversarialCheckpoint,
   shouldRunAdversarial,
 } from "../gates/adversarial.js";
@@ -195,6 +196,7 @@ async function runAdversarialPrefix(
     record.adversarial.verdict === "PATCH" &&
     record.adversarial.status !== "passed"
   ) {
+    printAdversarialFindings(io.stderr, record.adversarial.findings);
     throw new PluginError("blocked", "run devkit implement --accept-patch");
   }
   const run = shouldRunAdversarial({
@@ -223,6 +225,14 @@ async function runAdversarialPrefix(
       throw new PluginError("blocked", "run devkit implement --accept-patch");
     }
     return;
+  }
+  if (
+    record.adversarial.status === "blocked" ||
+    (record.adversarial.verdict === "BLOCK" &&
+      record.adversarial.status !== "passed")
+  ) {
+    printAdversarialFindings(io.stderr, record.adversarial.findings);
+    throw new PluginError("blocked", "adversarial BLOCK");
   }
   if (markAdversarialSkipped(record)) {
     await write(record);

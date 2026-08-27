@@ -114,6 +114,7 @@ function sample(
       ran_at: null,
       session_id: null,
       findings_hash: null,
+      findings: [],
     },
     resume_step_id: "S1",
     blocking_open_question_ids: [],

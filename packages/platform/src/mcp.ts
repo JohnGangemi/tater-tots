@@ -7,6 +7,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createContext } from "./lib/context.js";
+import { evidenceCheck } from "./lib/evidence/check.js";
 import { errorMessage, isPlatformError, PlatformError } from "./lib/errors.js";
 import { graphImpact, graphSearch, graphSymbol } from "./lib/graph/tools.js";
 import { logPlatform } from "./lib/log.js";
@@ -22,6 +23,7 @@ export const MCP_TOOL_NAMES = [
   "graph_impact",
   "playbook_lookup",
   "playbook_record",
+  "evidence_check",
 ] as const;
 
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
@@ -93,6 +95,16 @@ const PLAYBOOK_RECORD_SCHEMA = {
   additionalProperties: false,
 };
 
+const EVIDENCE_CHECK_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    command: { type: "string", maxLength: 4000 },
+    purpose: { type: "string", maxLength: 40 },
+    force: { type: "boolean" },
+  },
+  additionalProperties: false,
+};
+
 const TOOLS: Tool[] = [
   {
     name: "graph_search",
@@ -122,6 +134,13 @@ const TOOLS: Tool[] = [
     description:
       "Write a command into the personal playbook if it is worthy. For hooks; skills should not need to call this.",
     inputSchema: PLAYBOOK_RECORD_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "evidence_check",
+    description:
+      "Run a local command or a playbook command. This tool executes a local command. It returns pass or fail and a short tail.",
+    inputSchema: EVIDENCE_CHECK_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
 ];
@@ -209,6 +228,26 @@ function parsePlaybookLookup(raw: unknown): { purpose?: string; prefix?: string 
   return {
     ...(purpose !== undefined ? { purpose } : {}),
     ...(prefix !== undefined ? { prefix } : {}),
+  };
+}
+
+function parseEvidenceCheck(raw: unknown): {
+  command?: string;
+  purpose?: string;
+  force?: boolean;
+} {
+  const obj = asObject(raw);
+  noExtra(obj, ["command", "purpose", "force"]);
+  const command = readString(obj, "command", { required: false, min: 0, max: 4000 });
+  const purpose = readString(obj, "purpose", { required: false, min: 0, max: 40 });
+  if ("force" in obj && typeof obj.force !== "boolean") {
+    throw new PlatformError("usage", "force must be a boolean");
+  }
+  const force = typeof obj.force === "boolean" ? obj.force : undefined;
+  return {
+    ...(command !== undefined ? { command } : {}),
+    ...(purpose !== undefined ? { purpose } : {}),
+    ...(force !== undefined ? { force } : {}),
   };
 }
 
@@ -305,6 +344,8 @@ async function dispatch(name: string, args: unknown, opts: McpRunOpts): Promise<
         // ObserveEvent.tool_name is required; hooks record Bash.
         tool_name: parsed.q.tool_name ?? "Bash",
       });
+    case "evidence_check":
+      return evidenceCheck(ctx, parsed.q);
     default: {
       const _never: never = parsed;
       throw new PlatformError("not_found", `Unknown tool ${String(_never)}`);
@@ -326,7 +367,8 @@ type ParsedTool =
         duration: number;
         tool_name?: string;
       };
-    };
+    }
+  | { tool: "evidence_check"; q: { command?: string; purpose?: string; force?: boolean } };
 
 function parseToolArgs(tool: McpToolName, args: unknown): ParsedTool {
   switch (tool) {
@@ -340,6 +382,8 @@ function parseToolArgs(tool: McpToolName, args: unknown): ParsedTool {
       return { tool, q: parsePlaybookLookup(args) };
     case "playbook_record":
       return { tool, q: parsePlaybookRecord(args) };
+    case "evidence_check":
+      return { tool, q: parseEvidenceCheck(args) };
     default: {
       const _never: never = tool;
       throw new PlatformError("not_found", `Unknown tool ${_never}`);

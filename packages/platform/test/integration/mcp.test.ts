@@ -137,7 +137,7 @@ after(() => {
   }
 });
 
-test("tools/list has five tools with design JSON Schema", async () => {
+test("tools/list has six tools with design JSON Schema", async () => {
   const dataRoot = tmp("devkit-data-");
   const repo = makeRepo();
   const env = isolatedEnv(dataRoot);
@@ -147,8 +147,13 @@ test("tools/list has five tools with design JSON Schema", async () => {
     const listed = await client.listTools();
     const names = listed.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [...MCP_TOOL_NAMES].sort());
+    assert.equal(listed.tools.length, 6);
     assert.equal(
-      listed.tools.some((t) => t.name === "evidence_check" || t.name.startsWith("tune_")),
+      listed.tools.some((t) => t.name.startsWith("tune_")),
+      false,
+    );
+    assert.equal(
+      listed.tools.some((t) => t.name === "adversarial_review"),
       false,
     );
     const search = listed.tools.find((t) => t.name === "graph_search");
@@ -164,6 +169,11 @@ test("tools/list has five tools with design JSON Schema", async () => {
     const record = listed.tools.find((t) => t.name === "playbook_record");
     assert.match(record?.description ?? "", /writes|Write/i);
     assert.match(record?.description ?? "", /hooks/i);
+    const evidence = listed.tools.find((t) => t.name === "evidence_check");
+    assert.equal(evidence?.inputSchema.type, "object");
+    assert.equal(evidence?.inputSchema.additionalProperties, false);
+    assert.equal(evidence?.annotations?.readOnlyHint, false);
+    assert.match(evidence?.description ?? "", /execut/i);
   });
 });
 
@@ -360,7 +370,7 @@ test("graph tools return short hits after init", async () => {
   });
 });
 
-test("devkit mcp stdio lists five tools and keeps stdout as JSON-RPC", async () => {
+test("devkit mcp stdio lists six tools and keeps stdout as JSON-RPC", async () => {
   chmodSync(fakeCbmBin, 0o755);
   const dataRoot = tmp("devkit-data-");
   const repo = makeRepo();
@@ -386,7 +396,7 @@ test("devkit mcp stdio lists five tools and keeps stdout as JSON-RPC", async () 
     assert.equal(client.getServerCapabilities()?.tools?.listChanged, false);
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((t) => t.name).sort(), [...MCP_TOOL_NAMES].sort());
-    assert.equal(listed.tools.length, 5);
+    assert.equal(listed.tools.length, MCP_TOOL_NAMES.length);
     assert.equal(existsSync(playbooks), false);
     const looked = await client.callTool({
       name: "playbook_lookup",

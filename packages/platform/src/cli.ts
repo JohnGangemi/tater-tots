@@ -7,6 +7,7 @@ import { createContext, type PlatformContext } from "./lib/context.js";
 import { errorMessage, exitCodeFor, isPlatformError, PlatformError } from "./lib/errors.js";
 import type { HttpsGet } from "./lib/graph/cbm-fetch.js";
 import { formatInitStdout, initGraph } from "./lib/graph/init.js";
+import { evidenceCheck, type EvidenceInput, type EvidenceResult } from "./lib/evidence/check.js";
 import { runMcpServer } from "./mcp.js";
 import { playbookList, playbookStats } from "./lib/playbook/store.js";
 import { COMMAND_SHOW_MAX, SHOW_DEFAULT, SHOW_MAX } from "./lib/playbook/types.js";
@@ -23,7 +24,7 @@ export type CliArgs = {
   rest: string[];
 };
 
-const KNOWN_COMMANDS = new Set(["init", "playbook", "tune", "mcp", "hook"]);
+const KNOWN_COMMANDS = new Set(["init", "playbook", "tune", "mcp", "hook", "evidence-check"]);
 const INDEX_MODES = new Set<string>(["fast", "moderate", "full"]);
 
 const HELP = `Usage: devkit [options] <command>
@@ -261,6 +262,23 @@ export async function runCli(
     }
   }
 
+  if (args.command === "evidence-check") {
+    try {
+      const input = parseEvidenceCheckArgs(args.rest);
+      const ctx = await createContext({
+        repoPath: args.path,
+        configFile: args.config,
+        verification: args.verification,
+        env,
+      });
+      const result = await evidenceCheck(ctx, input);
+      io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return evidenceGateExit(result);
+    } catch (err) {
+      return writeError(io, err);
+    }
+  }
+
   let ctx: PlatformContext;
   try {
     ctx = await createContext({
@@ -324,6 +342,53 @@ function truncCommand(command: string): string {
     return command;
   }
   return `${command.slice(0, COMMAND_SHOW_MAX - 3)}...`;
+}
+
+function parseEvidenceCheckArgs(rest: string[]): EvidenceInput {
+  let command: string | undefined;
+  let purpose: string | undefined;
+  let force = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === undefined) {
+      continue;
+    }
+    if (a === "--force") {
+      force = true;
+      continue;
+    }
+    if (a === "--command" || a.startsWith("--command=")) {
+      const { value, next } = takeValue(rest, i, "--command");
+      command = value;
+      i = next;
+      continue;
+    }
+    if (a === "--purpose" || a.startsWith("--purpose=")) {
+      const { value, next } = takeValue(rest, i, "--purpose");
+      purpose = value;
+      i = next;
+      continue;
+    }
+    if (a.startsWith("-")) {
+      throw new PlatformError("usage", `Unknown flag ${a}`);
+    }
+    throw new PlatformError("usage", `Unexpected argument ${a}`);
+  }
+  return {
+    ...(command !== undefined ? { command } : {}),
+    ...(purpose !== undefined ? { purpose } : {}),
+    force,
+  };
+}
+
+function evidenceGateExit(result: EvidenceResult): number {
+  if (result.ok) {
+    return 0;
+  }
+  if (result.verdict === "fail" || result.verdict === "no_command" || result.verdict === "denied") {
+    return 2;
+  }
+  return 1;
 }
 
 async function runPlaybookCli(ctx: PlatformContext, rest: string[], io: CliIo): Promise<number> {

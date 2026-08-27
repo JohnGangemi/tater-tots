@@ -20,7 +20,7 @@ import {
 } from "@coredevkit/platform";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
-import { PluginError } from "../errors.js";
+import { isPluginError, PluginError } from "../errors.js";
 import { writeProgressAtomic } from "../fs-user.js";
 import { logPlugin } from "../log.js";
 import {
@@ -449,9 +449,12 @@ function shouldIngest(record: CoordinatorRecord): boolean {
   return false;
 }
 
-function readCoordinatorUnlocked(dest: string): CoordinatorRecord {
+function tryReadCoordinator(dest: string): {
+  record: CoordinatorRecord | null;
+  corrupt: boolean;
+} {
   if (!existsSync(dest)) {
-    throw new PluginError("not_found", "coordinator file not found");
+    return { record: null, corrupt: false };
   }
   let text: string;
   try {
@@ -459,9 +462,51 @@ function readCoordinatorUnlocked(dest: string): CoordinatorRecord {
   } catch (err) {
     throw new PluginError("io", "Could not read coordinator file", String(err));
   }
-  const record = parseCoordinator(text);
-  record.resume_step_id = resumeStep(record);
-  return record;
+  try {
+    return { record: parseCoordinator(text), corrupt: false };
+  } catch (err) {
+    if (isPluginError(err) && err.message === "coordinator file is corrupt") {
+      return { record: null, corrupt: true };
+    }
+    throw err;
+  }
+}
+
+function readCoordinatorUnlocked(dest: string): CoordinatorRecord {
+  const got = tryReadCoordinator(dest);
+  if (got.corrupt) {
+    corrupt();
+  }
+  if (!got.record) {
+    throw new PluginError("not_found", "coordinator file not found");
+  }
+  got.record.resume_step_id = resumeStep(got.record);
+  return got.record;
+}
+
+export type ProgressLockApi = {
+  dest: string;
+  tryRead: () => { record: CoordinatorRecord | null; corrupt: boolean };
+  write: (record: CoordinatorRecord) => Promise<void>;
+};
+
+/** Hold the lock for load and save so a merge cannot lose a concurrent mark. */
+export async function withProgressLock<T>(
+  ctx: PlatformContext,
+  opts: CoordinatorOpts | undefined,
+  fn: (api: ProgressLockApi) => Promise<T>,
+): Promise<T> {
+  const dest = progressFilePath(ctx, opts);
+  const release = await acquireProgressLock(ctx, dest);
+  try {
+    return await fn({
+      dest,
+      tryRead: () => tryReadCoordinator(dest),
+      write: (record) => writeCoordinatorUnlocked(ctx, dest, record),
+    });
+  } finally {
+    release();
+  }
 }
 
 async function writeCoordinatorUnlocked(

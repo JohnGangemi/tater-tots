@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coredevkit.local/intent.schema.json",
+  "title": "PlanIntent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "title",
+    "summary",
+    "goal",
+    "agent_plan",
+    "non_goals",
+    "constraints",
+    "assumptions",
+    "open_questions",
+    "components",
+    "processes",
+    "sequences",
+    "stack",
+    "risks"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "goal": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "agent_plan": { "type": "string", "minLength": 1 },
+    "theme_default": { "type": "string", "enum": ["system", "light", "dark"] },
+    "non_goals": { "type": "array", "items": { "type": "string" } },
+    "constraints": { "type": "array", "items": { "type": "string" } },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "open_questions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/openQuestion" }
+    },
+    "components": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/component" }
+    },
+    "processes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/process" }
+    },
+    "sequences": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sequence" }
+    },
+    "stack": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/stackItem" }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/risk" }
+    }
+  },
+  "$defs": {
+    "openQuestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "ask",
+        "why_it_matters",
+        "blocks",
+        "options",
+        "status",
+        "answer"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "ask": { "type": "string", "minLength": 1 },
+        "why_it_matters": { "type": "string", "minLength": 1 },
+        "blocks": { "type": "boolean" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["open", "resolved", "dropped"] },
+        "answer": { "type": ["string", "null"] }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "path", "role"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 }
+      }
+    },
+    "processStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "detail", "required"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string", "maxLength": 2000 },
+        "required": { "type": "boolean" }
+      }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "complete", "steps"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "complete": { "type": "boolean" },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/processStep" }
+        }
+      }
+    },
+    "sequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "process_id", "step_ids"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "process_id": { "type": ["string", "null"] },
+        "step_ids": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "stackItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "branch", "base", "step_ids", "depends_on"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "branch": { "type": "string", "minLength": 1 },
+        "base": { "type": "string", "minLength": 1 },
+        "step_ids": { "type": "array", "items": { "type": "string" } },
+        "depends_on": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "claim", "mitigation", "severity"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "claim": { "type": "string", "minLength": 1 },
+        "mitigation": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["low", "medium", "high"] }
+      }
+    }
+  }
+}

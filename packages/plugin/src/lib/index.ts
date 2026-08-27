@@ -40,3 +40,28 @@ export {
   ADVERSARIAL_STATUSES,
   TERMINAL,
 } from "./coordinator/types.js";
+export { parsePlanMd, parsePlanMdSteps } from "./coordinator/parse-plan-md.js";
+export { seedStackPrs, topoStackItems } from "./coordinator/seed-stack.js";
+export {
+  INTENT_VERSION,
+  parseIntent,
+  parseIntentJson,
+  loadIntentFile,
+  finalizeResolvedQuestions,
+  needsPlanDesigner,
+  type PlanIntent,
+  type OpenQuestion,
+  type Process,
+  type StackItem,
+  type IntentParseOpts,
+} from "./plan/intent.js";
+export { validateIntent, processIsComplete } from "./plan/validate.js";
+export {
+  renderPlanHtml,
+  renderPlanHtmlFile,
+  escapeHtml,
+} from "./plan/render-html.js";
+export { resolvePlanDir, planFilePaths } from "./plan/paths.js";
+export { startCoordinator } from "./plan/start-coordinator.js";
+export { runPlanCommand } from "./plan/command.js";
+export type { RunPacket, SubagentPacket } from "./plan/packet.js";

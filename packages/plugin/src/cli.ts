@@ -103,6 +103,11 @@ export type PluginArgv = {
   platformCommand?: string;
   pluginRest: string[];
   plan?: string;
+  goal?: string;
+  slug?: string;
+  render: boolean;
+  startCoordinator: boolean;
+  replace: boolean;
   remaining: string[];
 };
 
@@ -143,7 +148,14 @@ function flagName(token: string): string {
 export function parsePluginArgv(argv: string[]): PluginArgv {
   const remaining: string[] = argv.slice(0, 2);
   const pluginRest: string[] = [];
-  const out: PluginArgv = { help: false, pluginRest, remaining };
+  const out: PluginArgv = {
+    help: false,
+    pluginRest,
+    remaining,
+    render: false,
+    startCoordinator: false,
+    replace: false,
+  };
   const args = argv.slice(2);
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -163,11 +175,26 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
       continue;
     }
     if (PLUGIN_VALUE_FLAGS.has(name)) {
-      const { next } = takeValue(args, i, name);
+      const { value, next } = takeValue(args, i, name);
+      if (name === "--goal") {
+        out.goal = value;
+      }
+      if (name === "--slug") {
+        out.slug = value;
+      }
       i = next;
       continue;
     }
     if (PLUGIN_BOOL_FLAGS.has(a)) {
+      if (a === "--render") {
+        out.render = true;
+      }
+      if (a === "--start-coordinator") {
+        out.startCoordinator = true;
+      }
+      if (a === "--replace") {
+        out.replace = true;
+      }
       continue;
     }
     if (PLATFORM_VALUE_FLAGS.has(name)) {
@@ -269,7 +296,11 @@ export async function runPluginCli(
     return writeErr(io, err);
   }
 
-  if (parsed.help && !parsed.pluginCommand && !parsed.platformCommand) {
+  if (
+    parsed.help &&
+    (!parsed.pluginCommand || parsed.pluginCommand === "plan") &&
+    !parsed.platformCommand
+  ) {
     io.stdout.write(HELP);
     return 0;
   }
@@ -290,6 +321,28 @@ export async function runPluginCli(
     try {
       const shipped = opts.shippedSkillsDir ?? join(pluginRoot(), "skills");
       return await runSkillShow(parsed, env, io, platform, shipped);
+    } catch (err) {
+      return writeErr(io, err, platform);
+    }
+  }
+
+  if (parsed.pluginCommand === "plan") {
+    try {
+      const { runPlanCommand } = await import("./lib/plan/command.js");
+      return await runPlanCommand(
+        platform,
+        {
+          remaining: parsed.remaining,
+          plan: parsed.plan,
+          goal: parsed.goal,
+          slug: parsed.slug,
+          render: parsed.render,
+          startCoordinator: parsed.startCoordinator,
+          replace: parsed.replace,
+        },
+        env,
+        io,
+      );
     } catch (err) {
       return writeErr(io, err, platform);
     }

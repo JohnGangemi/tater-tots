@@ -26,7 +26,12 @@ export {
   type CoordinatorOpts,
   type MarkStepOpts,
 } from "./coordinator/store.js";
-export { resumeStep, currentStackItem } from "./coordinator/resume.js";
+export {
+  resumeStep,
+  currentStackItem,
+  stackItemComplete,
+} from "./coordinator/resume.js";
+export type { StackSkipOpts } from "./coordinator/resume.js";
 export type {
   AdversarialStatus,
   CoordinatorRecord,
@@ -66,6 +71,13 @@ export { startCoordinator } from "./plan/start-coordinator.js";
 export { runPlanCommand } from "./plan/command.js";
 export type { RunPacket, SubagentPacket } from "./plan/packet.js";
 export { runImplementCommand } from "./implement/command.js";
+export { runStackCommand } from "./stack/command.js";
+export {
+  publishStack,
+  resolveStackBase,
+  unionAllowedPaths,
+  GH_MISSING_MSG,
+} from "./stack/create.js";
 export { runDebugCommand } from "./debug/command.js";
 export { runReviewCommand, collectDiffPaths } from "./review/command.js";
 export { runFinishCommand } from "./finish/command.js";

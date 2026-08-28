@@ -43,6 +43,11 @@ export {
   startCoordinator,
   runPlanCommand,
   runImplementCommand,
+  runStackCommand,
+  publishStack,
+  resolveStackBase,
+  unionAllowedPaths,
+  GH_MISSING_MSG,
   runDebugCommand,
   runReviewCommand,
   collectDiffPaths,
@@ -57,6 +62,7 @@ export {
   resolveSubagent,
   buildPacket,
   currentStackItem,
+  stackItemComplete,
 } from "./lib/index.js";
 export type {
   PlatformModule,
@@ -70,6 +76,7 @@ export type {
   ProgressEvent,
   StackPr,
   StepStatus,
+  StackSkipOpts,
   CoordinatorOpts,
   MarkStepOpts,
   PlanIntent,

@@ -436,3 +436,24 @@ test("resume after done stays in the current stack item", async () => {
   rec.stack.prs[0] = stackPr("A", "pr_created");
   assert.equal(resumeStep(rec), "S2");
 });
+
+test("resume does not walk every step when no item is checked_out", async () => {
+  const dataRoot = tmp("devkit-data-");
+  const repo = makeRepo();
+  const ctx = await createContext({
+    repoPath: repo,
+    env: isolatedEnv(dataRoot),
+  });
+  const s1 = step("S1", "A last", "done");
+  s1.stack_id = "A";
+  const s2 = step("S2", "B first", "pending");
+  s2.stack_id = "B";
+  const rec = sampleRecord(ctx, [s1, s2]);
+  rec.resume_step_id = "S1";
+  rec.stack = {
+    enabled: true,
+    default_branch: "main",
+    prs: [stackPr("A", "none"), stackPr("B", "none")],
+  };
+  assert.equal(resumeStep(rec), null);
+});

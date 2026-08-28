@@ -1,5 +1,5 @@
 export type PluginErrorCode =
-  "usage" | "config" | "not_found" | "io" | "internal";
+  "usage" | "config" | "not_found" | "io" | "internal" | "blocked";
 
 export class PluginError extends Error {
   readonly code: PluginErrorCode;
@@ -25,6 +25,8 @@ export function pluginExitCode(err: PluginError): number {
     case "config":
     case "not_found":
       return 1;
+    case "blocked":
+      return 2;
     case "io":
     case "internal":
       return 3;

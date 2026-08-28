@@ -5,21 +5,34 @@ import {
   type StepStatus,
 } from "./types.js";
 
-function currentStackItem(record: CoordinatorRecord): StackPr | undefined {
+/** Current item is the first row whose phase is not pr_created. */
+export function currentStackItem(
+  record: CoordinatorRecord,
+): StackPr | undefined {
+  if (!record.stack.enabled) {
+    return undefined;
+  }
   return record.stack.prs.find((p) => p.phase !== "pr_created");
 }
 
+function stepsOnItem(
+  record: CoordinatorRecord,
+  item: StackPr,
+): CoordinatorRecord["steps"] {
+  return record.steps.filter((s) => s.stack_id === item.stack_id);
+}
+
 function firstNonTerminal(record: CoordinatorRecord): string | null {
-  let pool = record.steps;
   if (record.stack.enabled) {
     const item = currentStackItem(record);
     if (!item) {
       return null;
     }
-    pool = record.steps.filter((s) => s.stack_id === item.stack_id);
+    return (
+      stepsOnItem(record, item).find((s) => !TERMINAL.has(s.status))?.id ?? null
+    );
   }
-  const next = pool.find((s) => !TERMINAL.has(s.status));
-  return next?.id ?? null;
+  return record.steps.find((s) => !TERMINAL.has(s.status))?.id ?? null;
 }
 
 /** Resume id is the step to run now, not last completed + 1. */

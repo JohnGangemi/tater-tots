@@ -5,10 +5,16 @@
   "engines": {
     "node": ">=20"
   },
+  "bin": {
+    "devkit": "packages/plugin/dist/cli.js"
+  },
+  "dependencies": {
+    "@coredevkit/plugin": "workspace:*"
+  },
   "scripts": {
-    "build": "pnpm --filter @coredevkit/platform build",
-    "test": "pnpm --filter @coredevkit/platform test",
-    "typecheck": "pnpm --filter @coredevkit/platform typecheck",
-    "format": "pnpm --filter @coredevkit/platform format"
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "format": "pnpm -r format"
   }
 }

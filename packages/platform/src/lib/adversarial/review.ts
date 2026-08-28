@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { realpathSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { PlatformContext } from "../context.js";
 import { PlatformError } from "../errors.js";
 import { patternHash, recordSignal } from "../tune/store.js";
@@ -31,28 +31,43 @@ function emptyResult(
   };
 }
 
-function isInsideRepo(repoPath: string, filePath: string): boolean {
-  const rel = relative(repoPath, filePath);
+function isInsideRoot(root: string, filePath: string): boolean {
+  const rel = relative(root, filePath);
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
-function resolvePlanPath(repoPath: string, planPath: string): string {
+function tryRealpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+function isAllowedPlanPath(ctx: PlatformContext, filePath: string): boolean {
+  const repoPath = ctx.repoPath;
+  const realRepo = tryRealpath(repoPath);
+  const plansRoot = join(ctx.paths.devkitHome, "plans");
+  const realPlans = tryRealpath(plansRoot);
+  return (
+    isInsideRoot(repoPath, filePath) ||
+    isInsideRoot(realRepo, filePath) ||
+    isInsideRoot(plansRoot, filePath) ||
+    isInsideRoot(realPlans, filePath)
+  );
+}
+
+function resolvePlanPath(ctx: PlatformContext, planPath: string): string {
   if (!planPath || planPath.length > PLAN_PATH_MAX) {
     throw new PlatformError("usage", "plan_path length is invalid");
   }
-  const abs = isAbsolute(planPath) ? planPath : resolve(repoPath, planPath);
+  const abs = isAbsolute(planPath) ? planPath : resolve(ctx.repoPath, planPath);
   if (!abs.endsWith(".md") && !planPath.endsWith(".md")) {
     throw new PlatformError("usage", "plan_path must end with .md");
   }
-  let realRepo = repoPath;
-  try {
-    realRepo = realpathSync(repoPath);
-  } catch {
-    // keep repoPath
-  }
   // Jail on the resolved path first so outside files are not probed.
-  if (!isInsideRepo(repoPath, abs) && !isInsideRepo(realRepo, abs)) {
-    throw new PlatformError("usage", "plan_path must be inside the repo");
+  if (!isAllowedPlanPath(ctx, abs)) {
+    throw new PlatformError("usage", "plan_path must be inside the repo or DEVKIT_HOME/plans");
   }
   let real: string;
   try {
@@ -60,8 +75,8 @@ function resolvePlanPath(repoPath: string, planPath: string): string {
   } catch {
     throw new PlatformError("not_found", `Plan file not found: ${planPath}`);
   }
-  if (!isInsideRepo(realRepo, real)) {
-    throw new PlatformError("usage", "plan_path must be inside the repo");
+  if (!isAllowedPlanPath(ctx, real)) {
+    throw new PlatformError("usage", "plan_path must be inside the repo or DEVKIT_HOME/plans");
   }
   if (!real.endsWith(".md")) {
     throw new PlatformError("usage", "plan_path must end with .md");
@@ -89,7 +104,7 @@ export async function adversarialReview(
     return emptyResult(planPath, "off");
   }
 
-  const real = resolvePlanPath(ctx.repoPath, planPath);
+  const real = resolvePlanPath(ctx, planPath);
   let text: string;
   try {
     text = await readFile(real, "utf8");

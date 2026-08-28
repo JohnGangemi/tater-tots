@@ -14,7 +14,14 @@ export {
   joinDevkitHome,
   type DevkitPaths,
 } from "./lib/paths.js";
-export { PlatformError, type ErrorCode } from "./lib/errors.js";
+export { PlatformError, exitCodeFor, isPlatformError, type ErrorCode } from "./lib/errors.js";
+export { runCli, parseArgv } from "./cli.js";
+export {
+  writeFileAtomic,
+  mkdirUserOnly,
+  applyUserOnlyFileSync,
+  applyUserOnlyDirSync,
+} from "./lib/fs-atomic.js";
 export { initGraph, formatInitStdout, type InitOpts, type InitResult } from "./lib/graph/init.js";
 export {
   graphSearch,

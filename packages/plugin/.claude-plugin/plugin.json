@@ -1,0 +1,10 @@
+{
+  "name": "coredevkit",
+  "version": "0.1.0",
+  "description": "Opinionated plan, implement, debug, review, finish, and issue-to-pr workflows on the CoreDevKit platform.",
+  "author": {
+    "name": "CoreDevKit contributors"
+  },
+  "license": "MIT",
+  "keywords": ["plan", "implement", "issue-to-pr", "stacked-pr"]
+}

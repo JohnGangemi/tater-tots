@@ -175,6 +175,33 @@ test("T-SK-01 loadSkillBody and skill show load debug review finish", async () =
   }
 });
 
+test("T-IN-P-10 plan-designer Write is allowlisted to the intent path", () => {
+  const text = readFileSync(
+    join(pluginRoot, "agents", "plan-designer.md"),
+    "utf8",
+  );
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  assert.ok(m);
+  const raw: unknown = parseYaml(m[1] ?? "");
+  const map = raw as { name?: unknown; tools?: unknown; description?: unknown };
+  assert.equal(map.name, "plan-designer");
+  assert.match(String(map.description), /plan\.intent\.json only/i);
+  assert.match(String(map.description), /Does not write source/);
+  const tools = String(map.tools ?? "");
+  assert.match(tools, /\bRead\b/);
+  assert.match(tools, /\bWrite\b/);
+  assert.doesNotMatch(tools, /\bBash\b/);
+  assert.doesNotMatch(tools, /\bEdit\b/);
+  assert.doesNotMatch(tools, /\bMultiEdit\b/);
+  assert.doesNotMatch(tools, /\bGlob\b/);
+  assert.match(text, /Allowlist the Write tool/);
+  assert.match(text, /plan\.intent\.json/);
+  assert.match(text, /plan_dir/);
+  assert.match(text, /Do not write `plan\.md`/);
+  assert.match(text, /implementation source/);
+  assert.match(text, /Do not edit files outside that\s+intent path/);
+});
+
 test("reviewer agent is read-only and named reviewer", () => {
   const text = readFileSync(join(pluginRoot, "agents", "reviewer.md"), "utf8");
   const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);

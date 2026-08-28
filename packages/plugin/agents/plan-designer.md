@@ -2,16 +2,17 @@
 name: plan-designer
 description: >
   Use when writing-plans needs a design intent for more than one component
-  or a real process. Writes plan.intent.json only.
+  or a real process. Writes plan.intent.json only. Does not write source.
   Triggers: plan-designer, design intent, plan.intent.json.
 tools: Read, Write
 ---
 
 # Plan Designer
 
-Write `plan.intent.json` only. Do not write `plan.md`, `plan.html`, or
-implementation source. Do not edit files outside the intent path in the
-packet `plan_dir`.
+Write `plan.intent.json` only. Allowlist the Write tool: only
+`plan.intent.json` in packet `plan_dir`. Do not write `plan.md`,
+`plan.html`, or implementation source. Do not edit files outside that
+intent path.
 
 Call `graph_search`, `graph_symbol`, and `graph_impact` for structure.
 Do not walk the repository when those tools respond.

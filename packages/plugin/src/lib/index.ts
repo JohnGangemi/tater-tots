@@ -66,6 +66,10 @@ export { startCoordinator } from "./plan/start-coordinator.js";
 export { runPlanCommand } from "./plan/command.js";
 export type { RunPacket, SubagentPacket } from "./plan/packet.js";
 export { runImplementCommand } from "./implement/command.js";
+export { runDebugCommand } from "./debug/command.js";
+export { runReviewCommand, collectDiffPaths } from "./review/command.js";
+export { runFinishCommand } from "./finish/command.js";
+export type { FinishPacket } from "./finish/command.js";
 export { evidenceBeforeDone, evidenceGateExit } from "./gates/evidence.js";
 export {
   shouldRunAdversarial,

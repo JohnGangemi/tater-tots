@@ -115,6 +115,9 @@ export type PluginArgv = {
   evidencePurpose?: string;
   forceEvidence: boolean;
   acceptPatch: boolean;
+  query?: string;
+  scope?: string;
+  skipRemaining: boolean;
 };
 
 export type RunPluginCliOpts = {
@@ -163,6 +166,7 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
     replace: false,
     forceEvidence: false,
     acceptPatch: false,
+    skipRemaining: false,
   };
   const args = argv.slice(2);
   for (let i = 0; i < args.length; i++) {
@@ -202,6 +206,12 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
       if (name === "--evidence-purpose") {
         out.evidencePurpose = value;
       }
+      if (name === "--query") {
+        out.query = value;
+      }
+      if (name === "--scope") {
+        out.scope = value;
+      }
       i = next;
       continue;
     }
@@ -220,6 +230,9 @@ export function parsePluginArgv(argv: string[]): PluginArgv {
       }
       if (a === "--accept-patch") {
         out.acceptPatch = true;
+      }
+      if (a === "--skip-remaining") {
+        out.skipRemaining = true;
       }
       continue;
     }
@@ -385,6 +398,60 @@ export async function runPluginCli(
           evidencePurpose: parsed.evidencePurpose,
           forceEvidence: parsed.forceEvidence,
           acceptPatch: parsed.acceptPatch,
+        },
+        env,
+        io,
+      );
+    } catch (err) {
+      return writeErr(io, err, platform);
+    }
+  }
+
+  if (parsed.pluginCommand === "debug") {
+    try {
+      const { runDebugCommand } = await import("./lib/debug/command.js");
+      return await runDebugCommand(
+        platform,
+        {
+          remaining: parsed.remaining,
+          plan: parsed.plan,
+          query: parsed.query,
+        },
+        env,
+        io,
+      );
+    } catch (err) {
+      return writeErr(io, err, platform);
+    }
+  }
+
+  if (parsed.pluginCommand === "review") {
+    try {
+      const { runReviewCommand } = await import("./lib/review/command.js");
+      return await runReviewCommand(
+        platform,
+        {
+          remaining: parsed.remaining,
+          plan: parsed.plan,
+          scope: parsed.scope,
+        },
+        env,
+        io,
+      );
+    } catch (err) {
+      return writeErr(io, err, platform);
+    }
+  }
+
+  if (parsed.pluginCommand === "finish") {
+    try {
+      const { runFinishCommand } = await import("./lib/finish/command.js");
+      return await runFinishCommand(
+        platform,
+        {
+          remaining: parsed.remaining,
+          plan: parsed.plan,
+          skipRemaining: parsed.skipRemaining,
         },
         env,
         io,

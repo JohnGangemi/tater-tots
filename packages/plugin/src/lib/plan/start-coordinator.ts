@@ -130,6 +130,7 @@ function freshRecord(
       ran_at: null,
       session_id: null,
       findings_hash: null,
+      findings: [],
     },
     resume_step_id: steps[0]?.id ?? null,
     blocking_open_question_ids: blockingIds(intent),

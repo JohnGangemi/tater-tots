@@ -168,6 +168,15 @@ const recordZ = z.object({
     ran_at: z.string().nullable(),
     session_id: z.string().nullable(),
     findings_hash: z.string().nullable(),
+    findings: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          tag: z.enum(["patch-plan", "block", "note"]),
+          claim: z.string(),
+        }),
+      )
+      .default([]),
   }),
   resume_step_id: z.string().nullable(),
   blocking_open_question_ids: z.array(z.string()),

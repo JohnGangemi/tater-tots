@@ -384,6 +384,7 @@ export async function runPluginCli(
           evidenceCommand: parsed.evidenceCommand,
           evidencePurpose: parsed.evidencePurpose,
           forceEvidence: parsed.forceEvidence,
+          acceptPatch: parsed.acceptPatch,
         },
         env,
         io,

@@ -17,12 +17,20 @@ import {
   type StepStatus,
 } from "../coordinator/types.js";
 import { PluginError } from "../errors.js";
+import {
+  acceptAdversarialPatch,
+  markAdversarialSkipped,
+  newAdversarialSessionId,
+  printAdversarialFindings,
+  runAdversarialCheckpoint,
+  shouldRunAdversarial,
+} from "../gates/adversarial.js";
 import { evidenceBeforeDone, evidenceGateExit } from "../gates/evidence.js";
 import { logPlugin } from "../log.js";
 import { graphStateFromMapping } from "../plan/graph-state.js";
 import { htmlHint, type RunPacket } from "../plan/packet.js";
 import type { PlatformModule } from "../platform-guard.js";
-import { loadPluginConfig } from "../plugin-config.js";
+import { loadPluginConfig, type PluginConfig } from "../plugin-config.js";
 import { buildPacket } from "../subagents/packet.js";
 import { resolveSubagent } from "../subagents/resolve.js";
 import { worktreeHash } from "../worktree.js";
@@ -40,6 +48,7 @@ export type ImplementArgv = {
   evidenceCommand?: string;
   evidencePurpose?: string;
   forceEvidence: boolean;
+  acceptPatch: boolean;
 };
 
 function overrideLoaded(ctx: PlatformContext, skill: string): boolean {
@@ -168,6 +177,72 @@ function assertStackPause(
   }
 }
 
+async function runAdversarialPrefix(
+  ctx: PlatformContext,
+  record: CoordinatorRecord,
+  cfg: PluginConfig,
+  platform: PlatformModule,
+  acceptPatch: boolean,
+  sessionId: string,
+  write: (record: CoordinatorRecord) => Promise<void>,
+  io: ImplementCliIo,
+): Promise<void> {
+  if (acceptPatch) {
+    acceptAdversarialPatch(record);
+    await write(record);
+    return;
+  }
+  if (
+    record.adversarial.verdict === "PATCH" &&
+    record.adversarial.status !== "passed"
+  ) {
+    printAdversarialFindings(io.stderr, record.adversarial.findings);
+    throw new PluginError("blocked", "run devkit implement --accept-patch");
+  }
+  const run = shouldRunAdversarial({
+    resolved_level: ctx.config.resolved_level,
+    status: record.adversarial.status,
+    verdict: record.adversarial.verdict,
+    stepCount: record.steps.length,
+    stackEnabled: record.stack.enabled,
+    source: record.source,
+    minSteps: cfg.verification.min_steps_for_adversarial,
+  });
+  if (run) {
+    const out = await runAdversarialCheckpoint({
+      ctx,
+      record,
+      autoPatch: ctx.config.verification.auto_patch,
+      sessionId,
+      review: (c, q) => platform.adversarialReview(c, q),
+      stderr: io.stderr,
+    });
+    await write(record);
+    if (out.action === "block") {
+      throw new PluginError("blocked", "adversarial BLOCK");
+    }
+    if (out.action === "wait_accept") {
+      throw new PluginError("blocked", "run devkit implement --accept-patch");
+    }
+    return;
+  }
+  if (
+    record.adversarial.status === "blocked" ||
+    (record.adversarial.verdict === "BLOCK" &&
+      record.adversarial.status !== "passed")
+  ) {
+    printAdversarialFindings(io.stderr, record.adversarial.findings);
+    throw new PluginError("blocked", "adversarial BLOCK");
+  }
+  if (markAdversarialSkipped(record)) {
+    await write(record);
+    logPlugin(ctx.env, {
+      event: "plugin.adversarial.skipped",
+      repo_id: ctx.repoId,
+    });
+  }
+}
+
 async function runPacket(
   ctx: PlatformContext,
   record: CoordinatorRecord,
@@ -261,6 +336,17 @@ export async function runImplementCommand(
 
       const targetId = argv.step ?? resumeStep(record);
       assertStackPause(record, targetId);
+      const sessionId = newAdversarialSessionId();
+      await runAdversarialPrefix(
+        ctx,
+        record,
+        cfg,
+        platform,
+        argv.acceptPatch,
+        sessionId,
+        (next) => api.write(next),
+        io,
+      );
 
       if (!mark) {
         if (!targetId) {

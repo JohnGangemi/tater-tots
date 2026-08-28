@@ -27,6 +27,9 @@ export type StartCoordinatorInput = CoordinatorOpts & {
   replace: boolean;
   slug?: string;
   plugin: PluginConfig;
+  source?: CoordinatorRecord["source"];
+  issue?: CoordinatorRecord["issue"];
+  pipeline_phase?: CoordinatorRecord["pipeline_phase"];
 };
 
 function slugify(value: string): string {
@@ -103,7 +106,10 @@ function freshRecord(
   steps: CoordinatorStep[],
   prs: CoordinatorRecord["stack"]["prs"],
   intent: PlanIntent | null,
-  slug: string | undefined,
+  input: Pick<
+    StartCoordinatorInput,
+    "slug" | "source" | "issue" | "pipeline_phase"
+  >,
 ): CoordinatorRecord {
   const wt = worktreeHash(ctx.repoPath);
   const now = new Date().toISOString();
@@ -113,14 +119,14 @@ function freshRecord(
     repo_id: ctx.repoId,
     worktree_hash: wt.worktree_hash,
     worktree_sha256: wt.worktree_sha256,
-    plan_id: newPlanId(intent?.title ?? "plan", slug),
+    plan_id: newPlanId(intent?.title ?? "plan", input.slug),
     plan_dir: paths.planDir,
     intent_path: paths.intentPath,
     agent_plan: paths.agentPlan,
     html_path: paths.htmlPath,
-    source: "plan",
-    issue: null,
-    pipeline_phase: null,
+    source: input.source ?? "plan",
+    issue: input.issue ?? null,
+    pipeline_phase: input.pipeline_phase ?? null,
     created_at: now,
     updated_at: now,
     verification_level: ctx.config.resolved_level,
@@ -178,14 +184,14 @@ export async function startCoordinator(
     }
     if (got.corrupt && input.replace) {
       const prs = seedStackPrs(items, steps, []);
-      const rec = freshRecord(ctx, paths, steps, prs, intent, input.slug);
+      const rec = freshRecord(ctx, paths, steps, prs, intent, input);
       await api.write(rec);
       return rec;
     }
     const existing = got.record;
     if (!existing || input.replace) {
       const prs = seedStackPrs(items, steps, []);
-      const rec = freshRecord(ctx, paths, steps, prs, intent, input.slug);
+      const rec = freshRecord(ctx, paths, steps, prs, intent, input);
       await api.write(rec);
       return rec;
     }
@@ -206,6 +212,12 @@ export async function startCoordinator(
       intent_path: paths.intentPath,
       agent_plan: paths.agentPlan,
       html_path: paths.htmlPath,
+      source: input.source ?? existing.source,
+      issue: input.issue !== undefined ? input.issue : existing.issue,
+      pipeline_phase:
+        input.pipeline_phase !== undefined
+          ? input.pipeline_phase
+          : existing.pipeline_phase,
       updated_at: new Date().toISOString(),
       verification_level: ctx.config.resolved_level,
       blocking_open_question_ids: blockingIds(intent),

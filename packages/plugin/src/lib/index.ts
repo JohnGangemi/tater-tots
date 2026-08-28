@@ -82,6 +82,20 @@ export { runDebugCommand } from "./debug/command.js";
 export { runReviewCommand, collectDiffPaths } from "./review/command.js";
 export { runFinishCommand } from "./finish/command.js";
 export type { FinishPacket } from "./finish/command.js";
+export { runIssueToPrCommand } from "./issue/command.js";
+export type { IssueRunPacket } from "./issue/command.js";
+export {
+  parseIssueRef,
+  viewIssue,
+  formatSow,
+  type IssueSnap,
+} from "./issue/gh-issue.js";
+export {
+  sowFilePath,
+  writeSow,
+  publishIssue,
+  draftPhase,
+} from "./issue/pipeline.js";
 export { evidenceBeforeDone, evidenceGateExit } from "./gates/evidence.js";
 export {
   shouldRunAdversarial,

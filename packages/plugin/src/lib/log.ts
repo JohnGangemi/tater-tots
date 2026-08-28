@@ -34,6 +34,7 @@ export type PluginLogRecord = {
   result?: string;
   code?: string;
   key?: string;
+  issue?: number;
 };
 
 function rotate(file: string): void {
@@ -81,6 +82,7 @@ export function logPlugin(env: NodeJS.ProcessEnv, rec: PluginLogRecord): void {
     ...(rec.result !== undefined ? { result: rec.result } : {}),
     ...(rec.code !== undefined ? { code: rec.code } : {}),
     ...(rec.key !== undefined ? { key: rec.key } : {}),
+    ...(rec.issue !== undefined ? { issue: rec.issue } : {}),
   })}\n`;
   if (env.DEVKIT_LOG_STDERR === "1") {
     process.stderr.write(line);
